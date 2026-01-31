@@ -171,11 +171,29 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
 
         if (realData) {
             // gsz: 估算值, dwjz: 昨日净值, gszzl: 估算涨跌幅
-            lastNav = parseFloat(realData.dwjz || fund.lastNav);
-            lastNavDate = realData.jzrq || fund.lastNavDate;
-            estimatedNav = parseFloat(realData.gsz || lastNav);
-            estimatedChangePercent = parseFloat(realData.gszzl || "0");
-            name = realData.name || fund.name;
+            // 只有当 API 返回的数据有效(大于0)时才更新，防止休市时覆盖为 0
+            const apiDwjz = parseFloat(realData.dwjz);
+            const apiGsz = parseFloat(realData.gsz);
+
+            if (apiDwjz > 0) {
+                lastNav = apiDwjz;
+                lastNavDate = realData.jzrq;
+            }
+
+            // 如果估算值有效，使用估算值
+            if (apiGsz > 0) {
+                estimatedNav = apiGsz;
+                estimatedChangePercent = parseFloat(realData.gszzl || "0");
+            } else if (apiDwjz > 0) {
+                // 如果估算值无效（休市），但净值有效，则预估净值=最新净值，涨跌=0
+                estimatedNav = apiDwjz;
+                estimatedChangePercent = 0;
+            } else {
+                // 都无效，保持原状（通常是初始化时的0，或者上一次有效的值）
+                // 不做操作
+            }
+
+            if (realData.name) name = realData.name;
         }
 
         const profitToday = (estimatedNav - lastNav) * fund.holdingShares;
@@ -197,7 +215,9 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
 // 辅助：获取某个日期的净值
 export const getNavByDate = async (fundCode: string, dateStr: string): Promise<number> => {
     const realData = await fetchRealTimeEstimate(fundCode);
-    if (realData && realData.dwjz) return parseFloat(realData.dwjz);
+    if (realData && realData.dwjz && parseFloat(realData.dwjz) > 0) {
+        return parseFloat(realData.dwjz);
+    }
     return 1.0;
 };
 
