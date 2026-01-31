@@ -100,33 +100,36 @@ const ProfitCalendar = ({ funds }: { funds: Fund[] }) => {
                     // 获取该基金的交易记录，按日期升序
                     const transactions = (fund.transactions || []).sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
                     
-                    // 如果没有交易记录（旧数据），无法确定开始时间，跳过回溯（或假设从今天开始，即无历史）
+                    // 如果没有交易记录，跳过回溯（无法确定开始时间）
                     if (transactions.length === 0) return;
 
-                    // 从第一笔交易日期开始遍历历史净值
-                    const firstTxDate = new Date(transactions[0].date);
+                    // 确定回溯起点：第一笔交易的日期
+                    const startTxDateStr = transactions[0].date;
+                    const startTxDate = new Date(startTxDateStr);
 
-                    // 当前持仓份额 (动态计算)
+                    // 动态持仓份额
                     let currentShares = 0;
                     let txIndex = 0;
 
-                    // 遍历每一天 (从历史数据的第一天开始，或者优化为从第一笔交易前一天开始)
-                    // 简单起见，遍历 sortedHistory，只处理 >= firstTxDate 的
+                    // 遍历历史净值，从列表头开始
                     for (let i = 1; i < sortedHistory.length; i++) {
                         const currDay = sortedHistory[i];
                         const prevDay = sortedHistory[i-1];
                         const currDateObj = new Date(currDay.date);
 
-                        // 如果当前日期早于第一笔交易，跳过
-                        if (currDateObj < firstTxDate) continue;
+                        // 关键：只有当日期 >= 第一笔交易日期时，才开始计算盈亏
+                        if (currDateObj < startTxDate) continue;
 
                         // 更新截止到当前日期的持仓份额
-                        // 逻辑：处理所有日期 <= currDay.date 的交易
+                        // 处理所有日期 <= currDay.date 的交易
                         while(txIndex < transactions.length) {
                             const tx = transactions[txIndex];
                             const txDate = new Date(tx.date);
                             
-                            // 如果交易日期在当前净值日期之前或当天，应用该交易
+                            // 注意：这里假设交易是收盘确认，即当天净值变动对新买入份额生效？
+                            // 通常 T 日买入，T+1 确认。
+                            // 为了简化体验：假设交易日当天就持有该份额享受当日涨跌（或者反之）。
+                            // 这里采用：只要交易日期 <= 当前日期，就算持仓。
                             if (txDate <= currDateObj) {
                                 if (tx.type === 'BUY') {
                                     currentShares += tx.shares;
@@ -151,7 +154,7 @@ const ProfitCalendar = ({ funds }: { funds: Fund[] }) => {
                     }
                 });
 
-                // 4. 聚合数据 (同之前逻辑)
+                // 4. 聚合数据
                 const aggregatedData: any[] = [];
                 let aggregatedTotal = 0;
                 
@@ -169,11 +172,9 @@ const ProfitCalendar = ({ funds }: { funds: Fund[] }) => {
                         aggregatedTotal += val;
                     }
                 } else if (view === 'WEEK') {
-                     // 简单按周聚合 (最近8周)
                      const weekMap: {[key: string]: number} = {};
                      const weeks: string[] = [];
                      
-                     // 遍历过去 60 天的数据归档到周
                      for (let i = 0; i < 60; i++) {
                          const d = new Date();
                          d.setDate(d.getDate() - i);
@@ -220,7 +221,6 @@ const ProfitCalendar = ({ funds }: { funds: Fund[] }) => {
                 }
 
                 setChartData(aggregatedData);
-                // 显示当前视图最后一项的值（今日/本周/本月/本年）
                 if (aggregatedData.length > 0) {
                      setTotalProfit(aggregatedData[aggregatedData.length - 1].value);
                 } else {

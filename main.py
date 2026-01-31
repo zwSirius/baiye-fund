@@ -7,6 +7,7 @@ import requests
 import re
 import json
 import logging
+import numpy as np
 from datetime import datetime, timedelta, time
 
 # 配置日志
@@ -90,6 +91,21 @@ def _get_time_phase():
     else:
         return 'POST_MARKET'
 
+def _get_fund_history_akshare(code: str):
+    """使用 akshare 获取历史净值"""
+    try:
+        # 单位净值走势
+        df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
+        # 确保列名正确，通常是 '净值日期', '单位净值', '日增长率'
+        if not df.empty:
+            # 转换日期格式为字符串，确保 JSON 可序列化
+            if '净值日期' in df.columns:
+                df['净值日期'] = df['净值日期'].astype(str)
+            return df
+    except Exception as e:
+        logger.error(f"Akshare history fetch error for {code}: {e}")
+    return pd.DataFrame()
+
 def _get_fund_holdings_internal(code: str):
     """获取持仓 (带缓存)"""
     cached = data_cache.get_holdings(code)
@@ -151,7 +167,7 @@ def _get_stock_realtime_quotes(stock_codes: list):
     url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f3,f12&secids={','.join(secids)}"
     quotes = {}
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "User-Agent": "Mozilla/5.0",
         "Referer": "http://quote.eastmoney.com/"
     }
     try:
@@ -192,17 +208,10 @@ def _calculate_estimate_via_holdings(code: str, last_nav: float):
         total_weighted_change += (change * weight)
         total_weight += weight
     
-    # 如果没取到权重或行情，返回 None
     if total_weight == 0: return None
 
-    # 简易修正系数 1.0 (重仓股通常占50%-70%仓位，这里仅计算重仓股的加权涨跌作为基金整体涨跌的近似)
-    # 为了更准确，可以假设剩余仓位涨跌为0或跟随大盘，这里简单处理：
-    # 假设重仓股代表了基金的波动方向。
-    # 归一化权重：如果前十大只占50%，那么这50%的波动贡献了多少？
-    # 简单模型：(Sum(Weight * Change)) / 100
+    # 加权涨跌幅
     estimated_change_percent = (total_weighted_change / 100.0)
-    
-    # 某些基金波动大，可能需要乘系数，比如 0.9 或 1.1，这里暂用 1.0
     estimated_nav = last_nav * (1 + estimated_change_percent / 100.0)
     
     return {
@@ -234,9 +243,6 @@ def search_funds(key: str = Query(..., min_length=1)):
 
 @app.get("/api/market")
 def get_market_indices(codes: str = Query(None)):
-    """
-    获取市场指数/板块
-    """
     default_codes = ["1.000001", "0.399001", "0.399006", "0.399997", "0.399976"]
     target_codes = codes.split(',') if codes else default_codes
     if not target_codes: return []
@@ -280,7 +286,6 @@ def get_estimate(code: str):
     """
     核心估值接口：严格按照时间段逻辑返回数据
     """
-    # 基础结构
     data = {
         "fundcode": code, 
         "gsz": "0", "gszzl": "0", 
@@ -292,7 +297,7 @@ def get_estimate(code: str):
     phase = _get_time_phase()
     today_str = _get_current_china_date_str()
     
-    # 1. 无论什么阶段，先获取官方实时/收盘数据 (轻量级)
+    # 1. 获取官方实时/收盘数据 (轻量接口)
     try:
         timestamp = int(datetime.now().timestamp() * 1000)
         url = f"http://fundgz.1234567.com.cn/js/gszzl_{code}.js?rt={timestamp}"
@@ -303,57 +308,59 @@ def get_estimate(code: str):
             fetched = json.loads(match.group(1))
             if fetched: data.update(fetched)
     except: pass
+    
+    # 兜底：如果 gsz 为 0 或空，尝试用 dwjz 填充
+    if (data['gsz'] == '0' or data['gsz'] == '') and data['dwjz'] != '0' and data['dwjz'] != '':
+        data['gsz'] = data['dwjz']
 
-    # 2. 获取历史净值 (Akshare) 用于计算真实涨跌和兜底
-    #    注意：akshare 返回的是已确认的净值，通常T日的净值在T+1日能查到，或者T日晚间
-    history_df = pd.DataFrame()
-    try:
-        history_df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
-    except: pass
-
-    # --- 辅助函数：从历史计算真实涨跌 ---
+    # 2. 获取历史净值 (Akshare)
+    history_df = _get_fund_history_akshare(code)
+    
+    # --- 辅助：从历史设置真实数据 ---
     def set_real_data_from_history():
         if not history_df.empty:
+            # history_df 通常最后一行为最新
             latest = history_df.iloc[-1]
             data['dwjz'] = str(latest['单位净值'])
             data['jzrq'] = str(latest['净值日期'])
             
-            # 计算真实涨跌幅: (Latest - Prev) / Prev
+            last_nav = float(latest['单位净值'])
+            # 使用真实净值覆盖估值
+            data['gsz'] = str(last_nav)
+            data['source'] = 'real_history'
+
+            # 计算真实涨跌幅
             if len(history_df) >= 2:
                 prev = history_df.iloc[-2]
-                last_nav = float(latest['单位净值'])
                 prev_nav = float(prev['单位净值'])
                 if prev_nav > 0:
                     change = ((last_nav - prev_nav) / prev_nav) * 100
-                    data['gsz'] = str(last_nav) # 显示真实净值
-                    data['gszzl'] = "{:.2f}".format(change) # 显示真实涨跌
-                    data['source'] = 'real_history' # 标记源
+                    data['gszzl'] = "{:.2f}".format(change)
+                else:
+                    data['gszzl'] = "0.00"
             else:
-                data['gsz'] = str(latest['单位净值'])
                 data['gszzl'] = "0.00"
 
     # --- 阶段逻辑 ---
 
     # A. 盘前 / 周末 / 节假日
     if phase == 'PRE_MARKET' or phase == 'WEEKEND':
-        # 逻辑：显示上一个交易日的真实净值及涨跌幅
         set_real_data_from_history()
         return data
 
     # B. 盘中 (09:30 - 15:00)
     if phase == 'MARKET':
-        # 逻辑：优先官方估值 -> 官方失效则重仓股估值
         official_gszzl = float(data.get("gszzl", 0))
         
         if official_gszzl != 0:
-            # 官方数据有效，直接返回 (已在步骤1获取)
             return data
         else:
-            # 官方失效 (0.00)，启用重仓股实时计算
-            # 基准净值：取历史最新的净值 (昨日收盘)
+            # 官方失效，启用重仓股实时计算
             last_nav = 1.0
             if not history_df.empty:
                 last_nav = float(history_df.iloc[-1]['单位净值'])
+            elif float(data.get('dwjz', 0)) > 0:
+                last_nav = float(data['dwjz'])
             
             calc = _calculate_estimate_via_holdings(code, last_nav)
             if calc:
@@ -364,37 +371,39 @@ def get_estimate(code: str):
 
     # C. 盘后 (15:00 - 24:00)
     if phase == 'POST_MARKET':
-        # 逻辑：检查今日净值是否更新
-        # data['jzrq'] 是官方接口返回的净值日期
+        # 检查官方是否更新了今日净值
         official_jzrq = data.get('jzrq', '')
         
         if official_jzrq == today_str:
-            # 官方已更新今日净值 -> 显示今日真实净值及涨跌
-            # 需要计算涨跌幅：今日净值 (data['dwjz']) vs 昨日净值 (history_df[-1])
-            # 注意：如果akshare还没更新今日的，history_df[-1]就是昨日的
+            # 官方已更新 -> 显示真实净值
             current_nav = float(data.get('dwjz', 0))
+            
+            # 从 history 找昨日。如果 history 更新滞后，最后一行就是昨日
+            # 如果 history 更新及时，最后一行是今日，倒数第二行是昨日
+            prev_nav = 0
             if not history_df.empty:
-                # 假设akshare还没更新，history最后一个是昨日
-                # 检查日期：如果history最后一个日期也是今天，那取倒数第二个
                 last_hist = history_df.iloc[-1]
-                prev_nav = 0
                 if str(last_hist['净值日期']) == today_str:
+                     # Akshare 也更新了，取倒数第二个
                      if len(history_df) >= 2:
                          prev_nav = float(history_df.iloc[-2]['单位净值'])
                 else:
+                     # Akshare 未更新，最后一行是昨日
                      prev_nav = float(last_hist['单位净值'])
-                
-                if prev_nav > 0 and current_nav > 0:
-                    change = ((current_nav - prev_nav) / prev_nav) * 100
-                    data['gsz'] = str(current_nav)
-                    data['gszzl'] = "{:.2f}".format(change)
-                    data['source'] = "real_updated"
+            
+            if prev_nav > 0 and current_nav > 0:
+                change = ((current_nav - prev_nav) / prev_nav) * 100
+                data['gsz'] = str(current_nav)
+                data['gszzl'] = "{:.2f}".format(change)
+                data['source'] = "real_updated"
             return data
         else:
-            # 官方尚未更新今日净值 -> 依旧通过重仓股计算 (此时用的是收盘价，相当于收盘预估)
+            # 官方未更新 -> 启用重仓股计算 (作为收盘预估)
             last_nav = 1.0
             if not history_df.empty:
                 last_nav = float(history_df.iloc[-1]['单位净值'])
+            elif float(data.get('dwjz', 0)) > 0:
+                last_nav = float(data['dwjz'])
             
             calc = _calculate_estimate_via_holdings(code, last_nav)
             if calc:
@@ -428,12 +437,19 @@ def get_fund_detail(code: str):
 @app.get("/api/history/{code}")
 def get_history(code: str):
     try:
-        history_df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
-        if history_df.empty: return []
-        recent_df = history_df.tail(365)
+        df = _get_fund_history_akshare(code)
+        if df.empty: return []
+        
+        # Akshare 返回的按日期升序 (旧->新)
+        # 获取最近365天
+        recent_df = df.tail(365)
+        
         result = []
         for _, row in recent_df.iterrows():
-            result.append({"date": str(row['净值日期']),"value": float(row['单位净值'])})
+            result.append({
+                "date": str(row['净值日期']),
+                "value": float(row['单位净值'])
+            })
         return result
     except: return []
 

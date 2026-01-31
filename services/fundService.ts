@@ -274,13 +274,44 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
     return results;
 };
 
-// 辅助：获取某个日期的净值
+// 辅助：获取某个日期的净值 (修复版：从历史接口查找)
 export const getNavByDate = async (fundCode: string, dateStr: string): Promise<number> => {
-    const realData = await fetchRealTimeEstimate(fundCode);
-    if (realData && realData.dwjz && parseFloat(realData.dwjz) > 0) {
-        return parseFloat(realData.dwjz);
+    try {
+        // 获取历史数据
+        const history = await getFundHistoryData(fundCode);
+        
+        // 查找精确匹配
+        const exactMatch = history.find((h: any) => h.date === dateStr);
+        if (exactMatch) return exactMatch.value;
+
+        // 如果没有精确匹配（比如非交易日），查找最近的一个之前的日期
+        // 假设 history 是有序的（通常 akshare 是按时间升序）
+        // 如果是升序： 2023-01-01, 2023-01-02 ...
+        // 如果我们找 2023-01-01.5 (非交易日)，我们应该取 01-01 的值
+        
+        // 简单处理：倒序查找第一个小于 dateStr 的
+        const targetDate = new Date(dateStr).getTime();
+        
+        // 排序确保是降序 (新 -> 旧)
+        const sortedHistory = [...history].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        
+        for (const h of sortedHistory) {
+            if (new Date(h.date).getTime() <= targetDate) {
+                return h.value;
+            }
+        }
+        
+        // 如果都找不到，尝试获取实时估值作为兜底（比如今天是交易日但还没收盘）
+        const realData = await fetchRealTimeEstimate(fundCode);
+        if (realData && realData.dwjz && parseFloat(realData.dwjz) > 0) {
+            return parseFloat(realData.dwjz);
+        }
+
+        return 1.0;
+    } catch (e) {
+        console.warn("Failed to get nav by date", e);
+        return 1.0;
     }
-    return 1.0;
 };
 
 // 回测逻辑
