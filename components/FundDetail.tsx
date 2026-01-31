@@ -1,8 +1,8 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Fund, Transaction } from '../types';
 import { getFundHistoryData, fetchFundDetails } from '../services/fundService';
-import { ChevronLeft, Info, FileText, User, ShieldAlert, Edit2, Trash2, History, TrendingUp, Wallet, Loader2, AlertCircle } from 'lucide-react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { ChevronLeft, FileText, Edit2, Trash2, History, TrendingUp, Loader2, PieChart as PieChartIcon, Activity, TrendingDown } from 'lucide-react';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
 interface FundDetailProps {
   fund: Fund;
@@ -31,6 +31,9 @@ const CustomizedDot = (props: any) => {
   return null;
 };
 
+// Colors for Pie Chart
+const HOLDING_COLORS = ['#3b82f6', '#ef4444', '#f59e0b', '#22c55e', '#6366f1', '#ec4899', '#8b5cf6', '#14b8a6', '#f97316', '#64748b'];
+
 export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, onDelete, onBuy, onSell }) => {
   const [chartPeriod, setChartPeriod] = useState<number>(90);
   const [activeTab, setActiveTab] = useState<'INFO' | 'HISTORY'>('INFO');
@@ -53,7 +56,6 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
         setIsLoadingHistory(false);
 
         // 2. Get Details (via Backend)
-        // Always fetch to get latest holdings
         const details = await fetchFundDetails(fund);
         setDetailedFund(prev => ({ ...prev, ...details }));
         setIsLoadingDetails(false);
@@ -61,27 +63,46 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
     loadData();
   }, [fund.code]);
 
-  // Merge transaction data into chart history
-  const chartData = useMemo(() => {
-    if (realHistory.length === 0) return [];
+  // Merge transaction data into chart history & Calculate Max Drawdown
+  const { chartData, maxDrawdown, rangeReturn } = useMemo(() => {
+    if (realHistory.length === 0) return { chartData: [], maxDrawdown: 0, rangeReturn: 0 };
     
-    // Slice based on period
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - chartPeriod);
     
     const filteredHistory = realHistory.filter(item => new Date(item.date) >= cutoffDate);
     
-    // Map transactions
+    // Calculate Max Drawdown for the selected period
+    let maxDD = 0;
+    let peak = -Infinity;
+    if (filteredHistory.length > 0) {
+        filteredHistory.forEach(point => {
+            if (point.value > peak) peak = point.value;
+            const dd = (peak - point.value) / peak;
+            if (dd > maxDD) maxDD = dd;
+        });
+    }
+
+    // Calculate Return for the period
+    let ret = 0;
+    if (filteredHistory.length > 1) {
+        const start = filteredHistory[0].value;
+        const end = filteredHistory[filteredHistory.length - 1].value;
+        ret = ((end - start) / start) * 100;
+    }
+    
     const transactionMap = new Map<string, Transaction>();
     if (fund.transactions) {
         fund.transactions.forEach(t => transactionMap.set(t.date, t));
     }
 
-    return filteredHistory.map(item => ({
+    const data = filteredHistory.map(item => ({
         date: item.date,
         value: item.value,
         transaction: transactionMap.get(item.date) || null
     }));
+
+    return { chartData: data, maxDrawdown: (maxDD * 100).toFixed(2), rangeReturn: ret.toFixed(2) };
   }, [realHistory, chartPeriod, fund.transactions]);
 
   const handleDelete = () => {
@@ -91,7 +112,11 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
     }
   }
 
-  // Use detailedFund for display, falling back to prop fund
+  // Holdings Data for Pie Chart
+  const holdingsPieData = useMemo(() => {
+      return detailedFund.holdings.map(h => ({ name: h.name, value: h.percent }));
+  }, [detailedFund.holdings]);
+
   const displayFund = detailedFund;
 
   return (
@@ -108,6 +133,12 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                     <span>{displayFund.code}</span>
                     <span className="w-px h-3 bg-slate-300 dark:bg-slate-700"></span>
                     <span>{displayFund.tags[0]}</span>
+                    {displayFund.manager !== "暂无" && (
+                         <>
+                            <span className="w-px h-3 bg-slate-300 dark:bg-slate-700"></span>
+                            <span>{displayFund.manager}</span>
+                         </>
+                    )}
                 </div>
             </div>
         </div>
@@ -158,10 +189,37 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
               </div>
           </div>
 
+          {/* Risk Analysis Card (New Feature) */}
+          {!isLoadingHistory && realHistory.length > 0 && (
+             <div className="mx-4 mb-2 grid grid-cols-2 gap-2">
+                 <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm flex items-center justify-between">
+                     <div>
+                         <div className="text-[10px] text-slate-400 mb-0.5 flex items-center gap-1">
+                             <TrendingDown size={10} /> 区间最大回撤
+                         </div>
+                         <div className="text-sm font-bold text-slate-700 dark:text-slate-200">-{maxDrawdown}%</div>
+                     </div>
+                     <div className="h-8 w-1 bg-red-100 dark:bg-red-900/30 rounded-full overflow-hidden">
+                         <div className="bg-up-red w-full" style={{height: `${Math.min(parseFloat(maxDrawdown as string), 100)}%`}}></div>
+                     </div>
+                 </div>
+                 <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm flex items-center justify-between">
+                     <div>
+                         <div className="text-[10px] text-slate-400 mb-0.5 flex items-center gap-1">
+                             <Activity size={10} /> 区间收益率
+                         </div>
+                         <div className={`text-sm font-bold ${parseFloat(rangeReturn as string) >= 0 ? 'text-up-red' : 'text-down-green'}`}>
+                             {parseFloat(rangeReturn as string) > 0 ? '+' : ''}{rangeReturn}%
+                         </div>
+                     </div>
+                 </div>
+             </div>
+          )}
+
           {/* Chart Section */}
           <div className="bg-white dark:bg-slate-900 p-4 mb-2 border-t border-slate-50 dark:border-slate-800 min-h-[250px]">
              <div className="flex justify-between items-center mb-4">
-                 <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm">历史净值走势</h3>
+                 <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm">净值走势与交易点</h3>
                  <div className="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5">
                      {[30, 90, 180, 365].map(days => (
                          <button 
@@ -229,12 +287,14 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
 
           {activeTab === 'INFO' ? (
             <div className="space-y-2 mt-2">
-                {/* Holdings */}
+                {/* Holdings & Visualization */}
                 <div className="bg-white dark:bg-slate-900 p-4">
-                    <div className="flex items-center gap-2 mb-4">
-                        <FileText size={18} className="text-blue-500" />
-                        <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm">持仓明细 (Top 10)</h3>
-                        {/* 移除CORS警告提示，因为现在走后端了 */}
+                    <div className="flex items-center gap-2 mb-4 justify-between">
+                        <div className="flex items-center gap-2">
+                            <FileText size={18} className="text-blue-500" />
+                            <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm">持仓明细 (Top 10)</h3>
+                        </div>
+                        {displayFund.holdings.length > 0 && <span className="text-[10px] text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">占比: {displayFund.holdings.reduce((a,b)=>a+b.percent,0).toFixed(2)}%</span>}
                     </div>
                     
                     {isLoadingDetails ? (
@@ -242,30 +302,62 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                             <Loader2 className="animate-spin text-slate-300" />
                         </div>
                     ) : (
-                        <div className="space-y-3">
-                            {displayFund.holdings.length > 0 ? displayFund.holdings.map((stock, idx) => (
-                                <div key={stock.code} className="flex items-center justify-between text-sm">
-                                    <div className="flex items-center gap-3">
-                                        <span className="text-slate-300 w-4 font-mono italic">{idx + 1}</span>
-                                        <div>
-                                            <div className="font-medium text-slate-700 dark:text-slate-200">{stock.name}</div>
-                                            <div className="text-[10px] text-slate-400">{stock.code}</div>
-                                        </div>
-                                    </div>
-                                    <div className="text-right w-24">
-                                        <div className="font-medium text-slate-700 dark:text-slate-200">
-                                            {stock.percent > 0 ? stock.percent + '%' : '--'}
-                                        </div>
-                                        <div className={`text-[10px] ${stock.changePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                                            {stock.changePercent > 0 ? '+' : ''}{stock.changePercent}%
-                                        </div>
+                        <div>
+                             {/* Pie Chart Visualization */}
+                             {displayFund.holdings.length > 0 && (
+                                <div className="flex items-center justify-center h-32 mb-4">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <PieChart>
+                                            <Pie
+                                                data={holdingsPieData}
+                                                cx="50%"
+                                                cy="50%"
+                                                innerRadius={25}
+                                                outerRadius={45}
+                                                paddingAngle={2}
+                                                dataKey="value"
+                                                stroke="none"
+                                            >
+                                                {holdingsPieData.map((entry, index) => (
+                                                    <Cell key={`cell-${index}`} fill={HOLDING_COLORS[index % HOLDING_COLORS.length]} />
+                                                ))}
+                                            </Pie>
+                                            <Tooltip />
+                                        </PieChart>
+                                    </ResponsiveContainer>
+                                    <div className="text-xs text-slate-400 w-32 pl-2">
+                                        <div className="font-bold text-slate-700 dark:text-slate-200 mb-1">第一重仓</div>
+                                        <div className="truncate">{displayFund.holdings[0]?.name}</div>
+                                        <div className="text-blue-500 font-bold">{displayFund.holdings[0]?.percent}%</div>
                                     </div>
                                 </div>
-                            )) : (
-                                <div className="text-center text-slate-400 text-xs py-4">
-                                    暂无持仓数据或获取失败
-                                </div>
-                            )}
+                             )}
+
+                            <div className="space-y-3">
+                                {displayFund.holdings.length > 0 ? displayFund.holdings.map((stock, idx) => (
+                                    <div key={stock.code} className="flex items-center justify-between text-sm">
+                                        <div className="flex items-center gap-3">
+                                            <span className="text-slate-300 w-4 font-mono italic">{idx + 1}</span>
+                                            <div>
+                                                <div className="font-medium text-slate-700 dark:text-slate-200">{stock.name}</div>
+                                                <div className="text-[10px] text-slate-400">{stock.code}</div>
+                                            </div>
+                                        </div>
+                                        <div className="text-right w-24">
+                                            <div className="font-medium text-slate-700 dark:text-slate-200">
+                                                {stock.percent > 0 ? stock.percent + '%' : '--'}
+                                            </div>
+                                            <div className="w-16 h-1 bg-slate-100 dark:bg-slate-800 rounded-full ml-auto mt-1 overflow-hidden">
+                                                <div className="h-full bg-blue-500" style={{width: `${stock.percent * 5}%`}}></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )) : (
+                                    <div className="text-center text-slate-400 text-xs py-4">
+                                        暂无持仓数据或获取失败
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     )}
                 </div>
