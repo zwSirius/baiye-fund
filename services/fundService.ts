@@ -4,20 +4,6 @@ import { Fund, Stock, BacktestResult, BacktestPoint, SectorIndex } from '../type
 const STORAGE_KEY_FUNDS = 'smartfund_funds_v1';
 const STORAGE_KEY_GROUPS = 'smartfund_groups_v1';
 
-// --- Global Registry for Real-time Estimates ---
-const realTimeCallbackRegistry = new Map<string, (data: any) => void>();
-
-if (typeof window !== 'undefined' && !(window as any).jsonpgz) {
-    (window as any).jsonpgz = (data: any) => {
-        const code = data?.fundcode;
-        if (code && realTimeCallbackRegistry.has(code)) {
-            const resolve = realTimeCallbackRegistry.get(code);
-            if (resolve) resolve(data);
-            realTimeCallbackRegistry.delete(code);
-        }
-    };
-}
-
 // --- Helper: Load Script Safely ---
 const loadScript = (url: string, cleanupVar?: string): Promise<any> => {
     return new Promise((resolve, reject) => {
@@ -170,7 +156,7 @@ export const importData = (jsonString: string): boolean => {
 
 // --- 真实 API 接口 (Core) ---
 
-// 1. 搜索基金
+// 1. 搜索基金 (Using JSONP direct to Eastmoney)
 export const searchFunds = async (query: string): Promise<Fund[]> => {
   if (!query) return [];
   const url = `https://fundsuggest.eastmoney.com/FundSearch/api/FundSearchAPI.ashx?m=1&key=${encodeURIComponent(query)}`;
@@ -202,34 +188,16 @@ export const searchFunds = async (query: string): Promise<Fund[]> => {
   }
 };
 
-// 2. 获取实时估值 (Lightweight)
+// 2. 获取实时估值 (Using HF Proxy Backend)
 export const fetchRealTimeEstimate = async (fundCode: string) => {
-    const url = `https://fundgz.1234567.com.cn/js/${fundCode}.js?rt=${Date.now()}`;
-    return new Promise<any>((resolve) => {
-        realTimeCallbackRegistry.set(fundCode, resolve);
-        const script = document.createElement('script');
-        script.src = url;
-        const cleanup = () => {
-            if (script.parentNode) script.parentNode.removeChild(script);
-        };
-        script.onload = () => {
-            cleanup();
-            if (realTimeCallbackRegistry.has(fundCode)) {
-                setTimeout(() => {
-                    if (realTimeCallbackRegistry.has(fundCode)) {
-                        realTimeCallbackRegistry.delete(fundCode);
-                        resolve(null);
-                    }
-                }, 100);
-            }
-        };
-        script.onerror = () => {
-            cleanup();
-            realTimeCallbackRegistry.delete(fundCode);
-            resolve(null); 
-        };
-        document.body.appendChild(script);
-    });
+    const url = `https://baiye1997-baiye-fund-api.hf.space/api/estimate/${fundCode}`;
+    try {
+        const response = await fetch(url);
+        return await response.json();
+    } catch (error) {
+        console.error("后端请求失败:", error);
+        return null;
+    }
 };
 
 // 3. 深度数据获取 (PINGZHONGDATA - The "No Backend" Magic)
