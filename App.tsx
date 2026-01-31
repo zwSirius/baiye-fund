@@ -29,6 +29,9 @@ const App: React.FC = () => {
   const [totalMarketValue, setTotalMarketValue] = useState(0);
   const [lastUpdate, setLastUpdate] = useState(new Date());
   
+  // Refresh State
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  
   // Modals
   const [isAddModalOpen, setAddModalOpen] = useState(false);
   const [editingFund, setEditingFund] = useState<Fund | null>(null); 
@@ -87,6 +90,25 @@ const App: React.FC = () => {
     setTotalMarketValue(value);
   }, []);
 
+  // Handle Refresh (Manual)
+  const handleRefresh = useCallback(async (currentFunds = funds) => {
+    if (currentFunds.length === 0) return;
+    
+    setIsRefreshing(true);
+    try {
+        const updated = await updateFundEstimates(currentFunds);
+        setFunds(prev => {
+             // 这里简单替换，实际生产中可能需要合并状态防止覆盖正在编辑的字段
+             return updated;
+        });
+        setLastUpdate(new Date());
+    } catch (e) {
+        console.error("Refresh failed", e);
+    } finally {
+        setIsRefreshing(false);
+    }
+  }, [funds]);
+
   // Initialize Data
   useEffect(() => {
     const initialFunds = getInitialFunds();
@@ -95,11 +117,12 @@ const App: React.FC = () => {
     setGroups(initialGroups);
     setSectorIndices(getSectorIndices());
     
-    // Immediate update for real data
+    // Initial fetch on load
     if (initialFunds.length > 0) {
         handleRefresh(initialFunds);
     }
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Run once on mount
 
   // Persistence: Save data whenever funds or groups change
   useEffect(() => {
@@ -114,27 +137,8 @@ const App: React.FC = () => {
       calculateTotals(visibleFunds);
   }, [visibleFunds, calculateTotals]);
 
-  // Simulate Real-time Updates (Polling)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (funds.length > 0) {
-          handleRefresh(funds);
-      }
-    }, 10000); // Poll every 10s for real data
-
-    return () => clearInterval(interval);
-  }, [funds]);
-
-  const handleRefresh = useCallback(async (currentFunds = funds) => {
-    const updated = await updateFundEstimates(currentFunds);
-    setFunds(prev => {
-        // Deep compare or simple replace. Replace is safer for now.
-        // We need to merge with current state carefully if user is editing, 
-        // but for now simple replace updates the numbers.
-        return updated;
-    });
-    setLastUpdate(new Date());
-  }, [funds]);
+  // Removed setInterval polling to prevent IP Ban. 
+  // User must manually click refresh in Dashboard.
 
   // AI Analysis
   const handleAnalyze = async (fund: Fund) => {
@@ -163,10 +167,8 @@ const App: React.FC = () => {
     });
     
     // Immediately fetch latest data for the new fund
-    const updated = await updateFundEstimates([newFund]);
-    if (updated[0]) {
-        setFunds(prev => prev.map(f => f.id === newFund.id ? updated[0] : f));
-    }
+    // Note: We create a temp array because 'setFunds' is async
+    setTimeout(() => handleRefresh([newFund]), 100); 
   };
 
   const handleDeleteFund = (fundToDelete: Fund) => {
@@ -299,7 +301,8 @@ const App: React.FC = () => {
                 totalProfit={totalProfit}
                 totalMarketValue={totalMarketValue}
                 lastUpdate={lastUpdate}
-                onRefresh={() => handleRefresh()}
+                isRefreshing={isRefreshing}
+                onRefresh={() => handleRefresh(visibleFunds)}
                 onAnalyze={handleAnalyze}
                 onFundClick={(fund) => setSelectedFund(fund)}
                 onGroupChange={setCurrentGroupId}
@@ -403,7 +406,7 @@ const App: React.FC = () => {
                         </button>
                     </div>
                 </div>
-                <p className="text-xs text-slate-400 mt-4 text-center">Version 4.0.0 (Real Data + Backup)</p>
+                <p className="text-xs text-slate-400 mt-4 text-center">Version 4.1.0 (Manual Refresh Mode)</p>
             </div>
         )}
       </main>

@@ -10,12 +10,13 @@ interface DashboardProps {
   totalProfit: number;
   totalMarketValue: number;
   lastUpdate: Date;
+  isRefreshing?: boolean;
   onRefresh: () => void;
   onAnalyze: (fund: Fund) => void;
   onFundClick: (fund: Fund) => void;
   onGroupChange: (groupId: string) => void;
   onManageGroups: () => void;
-  onOpenSummary?: () => void; // Deprecated but keeping signature compatible if needed, though we use internal state now
+  onOpenSummary?: () => void; 
 }
 
 const formatMoney = (val: number) => {
@@ -37,26 +38,13 @@ const TAG_COLORS: Record<string, string> = {
 const SUMMARY_COLORS = ['#2563eb', '#ef4444', '#f59e0b', '#22c55e', '#6366f1', '#ec4899'];
 
 export const Dashboard: React.FC<DashboardProps> = ({ 
-    funds, groups, currentGroupId, totalProfit, totalMarketValue, lastUpdate, 
+    funds, groups, currentGroupId, totalProfit, totalMarketValue, lastUpdate, isRefreshing,
     onRefresh, onAnalyze, onFundClick, onGroupChange, onManageGroups
 }) => {
   const [viewMode, setViewMode] = useState<'FUNDS' | 'SUMMARY'>('FUNDS');
 
-  // --- Summary View Logic (Aggregate data for ALL groups) ---
-  // Note: 'funds' passed prop typically depends on currentGroupId in App.tsx. 
-  // However, for correct summary calculation, we ideally need ALL funds.
-  // We will assume that when user clicks "Summary", the parent passes 'all' funds OR we rely on what's available.
-  // IMPORTANT: For this to work perfectly, App.tsx should pass *all* funds to Dashboard, and Dashboard does the filtering.
-  // But App.tsx currently filters 'visibleFunds'.
-  // Workaround: We will use the 'groups' and 'funds' we have. 
-  // If 'funds' contains only current group, summary will be partial. 
-  // **Fix**: In App.tsx, we will ensure that when Dashboard requests summary view, we should probably switch currentGroupId to 'all'.
-  
   const groupStats = useMemo(() => {
     return groups.map(group => {
-        // This filtering works if 'funds' contains ALL funds. 
-        // If 'funds' is filtered, this might return empty for non-active groups.
-        // We will handle the "Switch to All" logic in the handler.
         const groupFunds = funds.filter(f => f.groupId === group.id);
         const marketValue = groupFunds.reduce((acc, f) => acc + (f.estimatedNav * f.holdingShares), 0);
         const todayProfit = groupFunds.reduce((acc, f) => acc + f.estimatedProfit, 0);
@@ -120,7 +108,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
   };
 
   const handleSummaryClick = () => {
-      // Switch to 'all' to ensure we have all data for aggregation
       if (currentGroupId !== 'all') {
           onGroupChange('all');
       }
@@ -132,7 +119,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
       setViewMode('FUNDS');
   };
 
-  // Determine if we are in Summary Mode
   const isSummary = viewMode === 'SUMMARY';
 
   return (
@@ -183,7 +169,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
          </button>
       </div>
 
-      {/* Asset Card (Shared Style but different color for Summary) */}
+      {/* Asset Card */}
       <div className={`rounded-2xl p-6 text-white shadow-lg mx-4 transition-all duration-300 ${
           isSummary
           ? 'bg-gradient-to-r from-indigo-600 to-purple-700 dark:from-indigo-900 dark:to-purple-950'
@@ -193,8 +179,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <span className="text-white/80 text-sm font-medium flex items-center gap-1">
              {isSummary ? <><LayoutDashboard size={14}/> 多账户总资产</> : (currentGroupId === 'all' ? '总资产' : groups.find(g => g.id === currentGroupId)?.name || '分组资产')} (元)
           </span>
-          <div className="bg-white/20 p-1.5 rounded-full cursor-pointer hover:bg-white/30 transition" onClick={onRefresh}>
-             <RefreshCw size={16} className="text-white" />
+          <div 
+             className="bg-white/20 p-1.5 rounded-full cursor-pointer hover:bg-white/30 transition active:scale-90" 
+             onClick={onRefresh}
+          >
+             <RefreshCw size={16} className={`text-white ${isRefreshing ? 'animate-spin' : ''}`} />
           </div>
         </div>
         <div className="text-3xl font-bold mb-4 tracking-tight">
@@ -215,8 +204,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
           </div>
         </div>
-        <div className="text-right text-[10px] text-white/50 mt-2 opacity-80">
-          更新时间: {lastUpdate.toLocaleTimeString()}
+        <div className="text-right text-[10px] text-white/50 mt-2 opacity-80 flex justify-end items-center gap-1">
+          <span>{isRefreshing ? '正在同步数据...' : `更新时间: ${lastUpdate.toLocaleTimeString()}`}</span>
         </div>
       </div>
 
@@ -308,20 +297,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
               {isSummary ? '分组明细' : (currentGroupId === 'all' ? '所有持仓' : '分组持仓')}
           </h2>
           {!isSummary && (
-             <span className="text-xs text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md">实时估值中</span>
+             <span className={`text-xs px-2 py-1 rounded-md transition ${isRefreshing ? 'text-blue-500 bg-blue-50' : 'text-slate-500 bg-slate-100 dark:text-slate-400 dark:bg-slate-800'}`}>
+                 {isRefreshing ? '同步云端数据...' : '点击卡片上方按钮刷新'}
+             </span>
           )}
         </div>
 
         <div className="space-y-3">
           
-          {/* Summary Mode: List Groups */}
+          {/* Summary Mode */}
           {isSummary && groupStats.map((group, idx) => (
               <div 
                   key={group.id}
                   onClick={() => handleGroupCardClick(group.id)}
                   className="bg-white dark:bg-slate-900 rounded-xl p-4 shadow-sm border border-slate-100 dark:border-slate-800 hover:shadow-md transition-all cursor-pointer active:scale-[0.99] group relative overflow-hidden"
               >
-                  {/* Decorative bar */}
                   <div className="absolute left-0 top-0 bottom-0 w-1" style={{backgroundColor: SUMMARY_COLORS[idx % SUMMARY_COLORS.length]}}></div>
                   
                   <div className="flex justify-between items-center mb-3 pl-2">
@@ -353,7 +343,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </div>
           ))}
 
-          {/* Funds Mode: List Funds */}
+          {/* Funds Mode */}
           {!isSummary && funds.length === 0 && (
               <div className="text-center py-10 text-slate-400 bg-white dark:bg-slate-900 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
                   <Users size={32} className="mx-auto mb-2 opacity-50" />
