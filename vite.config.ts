@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
   // 加载环境变量 (虽然 Vercel 会自动注入，但本地开发需要)
+  // @ts-ignore
   const env = loadEnv(mode, process.cwd(), '');
   
   return {

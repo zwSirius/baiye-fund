@@ -255,19 +255,9 @@ def get_market_indices(codes: str = Query(None)):
                 except (ValueError, TypeError):
                     change = 0.0
                 
-                # 简单的极值归一化作为热度 score
                 score = 50 + change * 10 
                 score = max(0, min(100, score))
                 
-                # 添加原始代码 (secid 格式的一部分) 以便前端识别
-                # 这里我们假设前端知道对应的 secid 前缀，或者我们直接返回带前缀的 secid 比较麻烦
-                # 简单处理：返回 f12 (代码)
-                
-                # 重新构建 secid 用于标识
-                market = "1" if str(item['f12']).startswith("000001") and item['f14']=="上证指数" else "0"
-                # 实际上这个逻辑不严谨，但对于展示够了
-                
-                # 为了保持简单，我们不在 response 里强行构造 secid，只返回 code (f12)
                 result.append({
                     "name": item['f14'],
                     "code": item['f12'], 
@@ -299,11 +289,9 @@ def get_estimate(code: str):
 
     current_dwjz = 0.0
     latest_jzrq = ""
-    if str(data.get("dwjz")) != "0":
-        current_dwjz = float(data.get("dwjz"))
-        latest_jzrq = data.get("jzrq")
-    else:
-        try:
+    # 尝试获取历史净值以作为兜底
+    try:
+        if str(data.get("dwjz")) == "0":
             history_df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
             if not history_df.empty:
                 latest = history_df.iloc[-1]
@@ -311,27 +299,40 @@ def get_estimate(code: str):
                 latest_jzrq = str(latest['净值日期'])
                 data['dwjz'] = str(current_dwjz)
                 data['jzrq'] = latest_jzrq
-        except: pass
+        else:
+            current_dwjz = float(data.get("dwjz"))
+            latest_jzrq = data.get("jzrq")
+    except: pass
 
     now = _get_current_china_time()
-    today_str = now.strftime("%Y-%m-%d")
     
-    # 决策 A: 真实净值已经是今天的 -> 完美
-    if latest_jzrq == today_str and current_dwjz > 0:
-        data['gsz'] = str(current_dwjz)
-        # 如果是真实净值，估值涨跌应该是0（因为已经结账了），或者保持当日的变动幅度
-        # 但通常估值接口在晚上会更新为真实净值，此时估值=真实值
-        return data
-    
-    # 决策 Weekend: 如果是周末，强制不进行估算，使用 dwjz 作为 gsz
+    # --- 修复周末/休市不显示涨跌幅的问题 ---
+    # 如果处于非交易时间，且官方 gsz/gszzl 为 0 或无效，
+    # 我们应该计算最近一个交易日的真实涨跌幅并返回给前端显示，而不是显示 0.00%
     if not _is_trading_time():
-         data['gsz'] = str(current_dwjz)
-         data['gszzl'] = "0.00"
-         return data
+        data['gsz'] = str(current_dwjz)
+        
+        # 尝试获取最近两日的净值来计算真实的涨跌幅
+        try:
+            history_df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
+            if len(history_df) >= 2:
+                last_nav = float(history_df.iloc[-1]['单位净值'])
+                prev_nav = float(history_df.iloc[-2]['单位净值'])
+                if prev_nav > 0:
+                    change_pct = ((last_nav - prev_nav) / prev_nav) * 100
+                    data['gszzl'] = "{:.2f}".format(change_pct)
+                else:
+                    data['gszzl'] = "0.00"
+            else:
+                 data['gszzl'] = "0.00"
+        except:
+             data['gszzl'] = "0.00"
 
+        return data
+
+    # 交易时间逻辑
     has_valid_official_est = (str(data.get("gsz")) != "0" and data.get("gszzl") != "0")
     
-    # 决策 B: 官方估值失效或不存在，启动自主计算
     if not has_valid_official_est and current_dwjz > 0:
         try:
             calc = _calculate_estimate_via_holdings(code, current_dwjz)
@@ -342,7 +343,7 @@ def get_estimate(code: str):
         except Exception as e:
             logger.error(f"Holdings calc failed for {code}: {e}")
 
-    # 决策 C: 兜底
+    # 兜底
     if str(data.get("gsz")) == "0" and current_dwjz > 0:
          data['gsz'] = str(current_dwjz)
          data['gszzl'] = "0.00"

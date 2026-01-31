@@ -92,17 +92,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       
       {/* Navigation / Mode Switcher */}
       <div className="px-4 pt-2 flex items-center gap-2 overflow-x-auto no-scrollbar">
-         <button 
-             onClick={() => handleGroupTabClick('all')}
-             className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition ${
-                 currentGroupId === 'all' && !isSummary
-                 ? 'bg-slate-800 text-white shadow-md dark:bg-white dark:text-slate-900' 
-                 : 'bg-white text-slate-500 border border-slate-200 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400'
-             }`}
-         >
-             全部
-         </button>
-         
+         {/* 调整位置：汇总在第一个 */}
          <button 
              onClick={handleSummaryClick}
              className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1 ${
@@ -112,6 +102,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
              }`}
          >
              <LayoutDashboard size={12} /> 汇总
+         </button>
+
+         <button 
+             onClick={() => handleGroupTabClick('all')}
+             className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition ${
+                 currentGroupId === 'all' && !isSummary
+                 ? 'bg-slate-800 text-white shadow-md dark:bg-white dark:text-slate-900' 
+                 : 'bg-white text-slate-500 border border-slate-200 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400'
+             }`}
+         >
+             全部
          </button>
 
          {groups.map(g => (

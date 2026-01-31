@@ -10,7 +10,7 @@ interface FundFormModalProps {
   initialFund?: Fund | null;
   groups: Group[];
   currentGroupId: string;
-  isWatchlistMode?: boolean; // 新增：是否为添加自选模式
+  isWatchlistMode?: boolean; 
 }
 
 export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, onSave, initialFund, groups, currentGroupId, isWatchlistMode = false }) => {
@@ -67,9 +67,9 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
   }, [query, step]);
 
   const handleSelect = async (fund: Fund) => {
-    // 如果是自选模式，直接保存，不需要输入份额
+    // 修复：自选模式下，直接保存并关闭，不需要输入任何信息
     if (isWatchlistMode) {
-        // Fetch nav for display
+        // 尝试获取最新数据，确保列表显示不为0
         const realData = await fetchRealTimeEstimate(fund.code);
         const id = `${fund.code}_watchlist_${Date.now()}`;
         
@@ -110,7 +110,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
     if (realData) {
         const updatedFund = {
             ...fund,
-            name: realData.name || fund.name, // Ensure name is not overwritten by empty
+            name: realData.name || fund.name,
             lastNav: parseFloat(realData.dwjz),
             estimatedNav: parseFloat(realData.gsz || realData.dwjz),
             lastNavDate: realData.jzrq
@@ -119,7 +119,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
         setCost(updatedFund.lastNav.toString());
     } else {
         setSelectedFund(fund);
-        setCost('1.0000'); // Fallback
+        setCost('1.0000'); 
     }
     setStep('input');
   };
@@ -175,7 +175,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
                 <Search className="absolute left-3 top-3 text-slate-400" size={20} />
                 <input
                   type="text"
-                  placeholder="输入代码或名称 (如: 005827)"
+                  placeholder="输入代码或名称搜索"
                   value={query}
                   onChange={e => setQuery(e.target.value)}
                   className="w-full pl-10 pr-4 py-3 rounded-xl border border-slate-200 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white dark:bg-slate-900 dark:text-slate-100"
