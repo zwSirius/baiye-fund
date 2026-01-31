@@ -2,7 +2,8 @@ import { GoogleGenAI } from "@google/genai";
 import { Fund } from "../types";
 
 // 警告：在实际生产中，不要在前端直接暴露 API Key。
-// 此处仅为演示目的，且按照 Prompt 要求假设 process.env.API_KEY 可用。
+// 此处仅为演示目的。process.env.API_KEY 会被 Vite 在构建时替换为字符串常量，
+// 所以这里不需要担心 process 未定义的问题。
 const apiKey = process.env.API_KEY || ''; 
 const ai = new GoogleGenAI({ apiKey });
 

@@ -1,8 +1,15 @@
 import { Fund, Stock, BacktestResult, BacktestPoint, SectorIndex } from '../types';
 
 // --- 配置后端地址 ---
-// 使用 Optional Chaining 防止在某些非 Vite 环境下报错
-const isProd = import.meta.env?.PROD ?? false;
+// 更加安全的检测方式：即使 import.meta.env 未定义也不会报错
+let isProd = false;
+try {
+    // @ts-ignore
+    isProd = typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.PROD;
+} catch (e) {
+    isProd = false;
+}
+
 const API_BASE = isProd ? '' : 'http://127.0.0.1:7860';
 
 // --- 本地存储键名 ---
