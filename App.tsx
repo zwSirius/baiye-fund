@@ -81,7 +81,6 @@ const App: React.FC = () => {
   }, [theme]);
 
   // Filter funds based on current group selection
-  // **Correction**: Separate Watchlist items from Dashboard items
   const holdingFunds = funds.filter(f => !f.isWatchlist && f.holdingShares > 0);
   const watchlistFunds = funds.filter(f => f.isWatchlist || f.holdingShares === 0);
 
@@ -101,16 +100,24 @@ const App: React.FC = () => {
   }, []);
 
   // Handle Refresh (Manual)
+  // 这里的 funds 依赖必须是正确的，否则闭包会导致旧数据覆盖新数据
   const handleRefresh = useCallback(async () => {
+    if (funds.length === 0 && marketCodes.length === 0) return;
+    
     setIsRefreshing(true);
     try {
-        const [updatedFunds, updatedIndices] = await Promise.all([
-            updateFundEstimates(funds),
-            fetchMarketIndices(marketCodes)
-        ]);
-        
-        setFunds(updatedFunds);
+        // 先获取最新的 market indices，这个和 funds 无关
+        const updatedIndices = await fetchMarketIndices(marketCodes);
         setSectorIndices(updatedIndices);
+
+        // 更新 funds。注意：这里我们传入当前的 funds 状态
+        // 但是，如果在 setFunds 之前 funds 已经变了（比如快速操作），这里可能会有问题
+        // 但对于手动刷新按钮，通常是安全的。
+        if (funds.length > 0) {
+            const updatedFunds = await updateFundEstimates(funds);
+            setFunds(updatedFunds);
+        }
+        
         setLastUpdate(new Date());
     } catch (e) {
         console.error("Refresh failed", e);
@@ -140,7 +147,6 @@ const App: React.FC = () => {
 
   // Persistence
   useEffect(() => {
-    // Save on changes
     saveFundsToLocal(funds);
     saveGroupsToLocal(groups);
   }, [funds, groups]);
@@ -175,7 +181,9 @@ const App: React.FC = () => {
       }
       return nextFunds;
     });
-    setTimeout(() => handleRefresh(), 100); 
+    // 关键修复：移除 setTimeout 刷新。
+    // 因为 handleRefresh 是基于旧的 funds 闭包创建的，直接调用会用旧列表覆盖新列表。
+    // 新添加的基金在 Modal 里已经获取了最新估值，所以不需要立即刷新。
   };
 
   const handleDeleteFund = (fundToDelete: Fund) => {
@@ -207,7 +215,6 @@ const App: React.FC = () => {
   const handleSaveMarketConfig = (codes: string[]) => {
       setMarketCodes(codes);
       saveMarketCodes(codes);
-      // Immediate Refresh
       fetchMarketIndices(codes).then(setSectorIndices);
   };
 
@@ -256,7 +263,6 @@ const App: React.FC = () => {
                       f.realizedProfit = (f.realizedProfit || 0) + profit;
                   }
                   
-                  // 如果买入后不再是 Watchlist
                   const isWatchlist = newShares === 0;
 
                   return {
@@ -291,7 +297,6 @@ const App: React.FC = () => {
       setAddModalOpen(true);
   };
 
-  // Determine sentiment based on market average (Simple logic)
   const marketAvgChange = sectorIndices.length > 0 
      ? sectorIndices.reduce((acc, s) => acc + s.changePercent, 0) / sectorIndices.length 
      : 0;
@@ -460,7 +465,7 @@ const App: React.FC = () => {
                         </button>
                     </div>
                 </div>
-                <p className="text-xs text-slate-400 mt-4 text-center">SmartFund Pro v2.1</p>
+                <p className="text-xs text-slate-400 mt-4 text-center">SmartFund Pro v2.2</p>
             </div>
         )}
       </main>

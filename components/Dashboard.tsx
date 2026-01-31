@@ -251,7 +251,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <div 
                     key={fund.id} 
                     onClick={() => onFundClick(fund)}
-                    className="bg-white dark:bg-slate-900 rounded-xl p-3.5 shadow-sm border border-slate-100 dark:border-slate-800 hover:shadow-md transition-all cursor-pointer active:scale-[0.99] relative"
+                    className="bg-white dark:bg-slate-900 rounded-xl p-3 shadow-sm border border-slate-100 dark:border-slate-800 hover:shadow-md transition-all cursor-pointer active:scale-[0.99] relative"
                 >
                 {/* Source Indicator */}
                 {fund.source === 'holdings_calc' && (

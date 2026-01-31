@@ -105,7 +105,8 @@ export const searchFunds = async (query: string): Promise<Fund[]> => {
             lastNav: 0,
             lastNavDate: "",
             holdings: [],
-            tags: [item.type || "混合型"], 
+            // Ensure type is present, fallback to "混合型" if empty
+            tags: [item.type && item.type.trim() !== "" ? item.type : "混合型"], 
             estimatedNav: 0,
             estimatedChangePercent: 0,
             estimatedProfit: 0,

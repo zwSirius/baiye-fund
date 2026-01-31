@@ -76,17 +76,19 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
         let estimatedNav = 0;
         let estimatedChangePercent = 0;
         let lastNav = 0;
+        let finalName = fund.name;
 
         if (realData) {
              lastNav = parseFloat(realData.dwjz);
              estimatedNav = parseFloat(realData.gsz || realData.dwjz);
              estimatedChangePercent = parseFloat(realData.gszzl || "0");
+             if (realData.name) finalName = realData.name;
         }
 
         const newFund: Fund = {
             ...fund,
             id,
-            name: realData?.name || fund.name,
+            name: finalName,
             lastNav,
             estimatedNav,
             estimatedChangePercent,
@@ -108,7 +110,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
     if (realData) {
         const updatedFund = {
             ...fund,
-            name: realData.name,
+            name: realData.name || fund.name, // Ensure name is not overwritten by empty
             lastNav: parseFloat(realData.dwjz),
             estimatedNav: parseFloat(realData.gsz || realData.dwjz),
             lastNavDate: realData.jzrq
