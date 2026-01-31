@@ -1,106 +1,13 @@
 import { Fund, Stock, BacktestResult, BacktestPoint, SectorIndex } from '../types';
 
+// --- 配置你的后端地址 ---
+const API_BASE = 'https://baiye1997-baiye-fund-api.hf.space';
+
 // --- 本地存储键名 ---
 const STORAGE_KEY_FUNDS = 'smartfund_funds_v1';
 const STORAGE_KEY_GROUPS = 'smartfund_groups_v1';
 
-// --- Helper: Load Script Safely ---
-const loadScript = (url: string, cleanupVar?: string): Promise<any> => {
-    return new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = url;
-        script.onload = () => {
-            if (script.parentNode) script.parentNode.removeChild(script);
-            resolve(true);
-        };
-        script.onerror = () => {
-            if (script.parentNode) script.parentNode.removeChild(script);
-            // Don't reject, just resolve false so Promise.all doesn't fail entire batch
-            console.warn(`Failed to load script: ${url}`);
-            resolve(false);
-        };
-        document.body.appendChild(script);
-    });
-};
-
-// --- Helper: Fetch Sina Stock Data (Batch) ---
-// 获取股票实时行情: https://hq.sinajs.cn/list=sh600519,sz000858
-const fetchStockDetails = async (stockCodes: string[]): Promise<Map<string, { price: number, change: number, name: string }>> => {
-    if (stockCodes.length === 0) return new Map();
-
-    // Convert codes: 600519 -> sh600519, 000858 -> sz000858
-    // Pingzhong returns codes like "600519", need to prefix
-    const sinaCodes = stockCodes.map(c => {
-        if (c.startsWith('6') || c.startsWith('9')) return `sh${c}`;
-        return `sz${c}`; // 00, 30 start
-    });
-
-    const url = `https://hq.sinajs.cn/list=${sinaCodes.join(',')}`;
-    
-    // Sina API defines variables like: var hq_str_sh600519="Moutai,..."
-    await loadScript(url);
-
-    const result = new Map();
-    sinaCodes.forEach((fullCode, idx) => {
-        const rawCode = stockCodes[idx];
-        const varName = `hq_str_${fullCode}`;
-        const dataStr = (window as any)[varName];
-        
-        if (dataStr) {
-            const parts = dataStr.split(',');
-            // Sina format: name, open, prev_close, current, high, low, buy, sell, ...
-            if (parts.length > 3) {
-                const name = parts[0];
-                const current = parseFloat(parts[3]);
-                const prevClose = parseFloat(parts[2]);
-                const change = prevClose > 0 ? ((current - prevClose) / prevClose) * 100 : 0;
-                
-                result.set(rawCode, {
-                    name: name,
-                    price: current,
-                    change: parseFloat(change.toFixed(2))
-                });
-            }
-        }
-        // Cleanup global var
-        try { delete (window as any)[varName]; } catch(e) {}
-    });
-
-    return result;
-};
-
-
-// --- JSONP Helper for Search ---
-const fetchJsonp = (url: string, callbackName: string): Promise<any> => {
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    const uniqueCallback = `${callbackName}_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-    
-    // @ts-ignore
-    window[uniqueCallback] = (data: any) => {
-      delete (window as any)[uniqueCallback];
-      if (script.parentNode) {
-          script.parentNode.removeChild(script);
-      }
-      resolve(data);
-    };
-
-    const separator = url.includes('?') ? '&' : '?';
-    script.src = `${url}${separator}callback=${uniqueCallback}`;
-    
-    script.onerror = () => {
-      delete (window as any)[uniqueCallback];
-      if (script.parentNode) {
-          script.parentNode.removeChild(script);
-      }
-      reject(new Error(`JSONP request failed for ${url}`));
-    };
-
-    document.body.appendChild(script);
-  });
-};
-
-// --- Storage & Data Management ---
+// --- Storage & Data Management (保持不变) ---
 
 export const saveFundsToLocal = (funds: Fund[]) => {
     localStorage.setItem(STORAGE_KEY_FUNDS, JSON.stringify(funds));
@@ -154,114 +61,110 @@ export const importData = (jsonString: string): boolean => {
     }
 };
 
-// --- 真实 API 接口 (Core) ---
+// --- 全新纯后端 API 接口 ---
 
-// 1. 搜索基金 (Using JSONP direct to Eastmoney)
+// 1. 搜索基金 (Backend)
 export const searchFunds = async (query: string): Promise<Fund[]> => {
   if (!query) return [];
-  const url = `https://fundsuggest.eastmoney.com/FundSearch/api/FundSearchAPI.ashx?m=1&key=${encodeURIComponent(query)}`;
   try {
-    const data = await fetchJsonp(url, 'fundSearchCallback');
-    if (!data || !data.Datas) return [];
-
-    return data.Datas.map((item: any) => ({
-        id: `temp_${item.CODE}`,
-        code: item.CODE,
-        name: item.NAME,
-        manager: "暂无",
-        lastNav: 0,
-        lastNavDate: "",
-        holdings: [],
-        tags: [item.FundType || "混合型"], 
-        estimatedNav: 0,
-        estimatedChangePercent: 0,
-        estimatedProfit: 0,
-        groupId: '',
-        holdingShares: 0,
-        holdingCost: 0,
-        realizedProfit: 0,
-        transactions: []
-    }));
+    const response = await fetch(`${API_BASE}/api/search?key=${encodeURIComponent(query)}`);
+    const data = await response.json();
+    
+    // 适配后端返回格式 (假设后端透传或标准化了数据)
+    // 如果后端返回 [{ "基金代码": "...", "基金简称": "..." }]
+    if (Array.isArray(data)) {
+        return data.map((item: any) => ({
+            id: `temp_${item.CODE || item['基金代码']}`,
+            code: item.CODE || item['基金代码'],
+            name: item.NAME || item['基金简称'],
+            manager: "暂无",
+            lastNav: 0,
+            lastNavDate: "",
+            holdings: [],
+            tags: [item.FundType || item['基金类型'] || "混合型"], 
+            estimatedNav: 0,
+            estimatedChangePercent: 0,
+            estimatedProfit: 0,
+            groupId: '',
+            holdingShares: 0,
+            holdingCost: 0,
+            realizedProfit: 0,
+            transactions: []
+        }));
+    }
+    return [];
   } catch (error) {
     console.error("Search failed:", error);
     return [];
   }
 };
 
-// 2. 获取实时估值 (Using HF Proxy Backend)
+// 2. 获取实时估值 (Backend)
 export const fetchRealTimeEstimate = async (fundCode: string) => {
-    const url = `https://baiye1997-baiye-fund-api.hf.space/api/estimate/${fundCode}`;
     try {
-        const response = await fetch(url);
+        const response = await fetch(`${API_BASE}/api/estimate/${fundCode}`);
+        if (!response.ok) return null;
         return await response.json();
     } catch (error) {
-        console.error("后端请求失败:", error);
+        console.error("Estimate request failed:", error);
         return null;
     }
 };
 
-// 3. 深度数据获取 (PINGZHONGDATA - The "No Backend" Magic)
-// 获取真实历史净值、股票代码列表
-export const fetchFundDetailsFromPingzhong = async (fund: Fund): Promise<Fund> => {
-    const url = `https://fund.eastmoney.com/pingzhongdata/${fund.code}.js?v=${Date.now()}`;
-    
-    await loadScript(url);
-
-    // Pingzhong defines global vars:
-    // fS_name, fS_code, Data_netWorthTrend (History), Data_ACWorthTrend, stockCodesNew (Holdings)
-
-    const w = window as any;
-    const historyData = w.Data_netWorthTrend; // Array of {x: timestamp, y: nav, equityReturn: change}
-    const stockCodes = w.stockCodesNew; // Array of "600519"
-    
-    // Clean up globals to save memory
-    // try { delete w.Data_netWorthTrend; delete w.stockCodesNew; } catch(e) {}
-
-    let updatedFund = { ...fund };
-
-    // Update History & Latest NAV from "Truth" (History)
-    if (historyData && Array.isArray(historyData) && historyData.length > 0) {
-        const lastPoint = historyData[historyData.length - 1];
-        // Pingzhong history is usually T-1 (Yesterday). 
-        // We use this as the base "lastNav".
-        updatedFund.lastNav = parseFloat(lastPoint.y);
+// 3. 获取基金详情：持仓、经理等 (Backend)
+// 前端不再进行任何爬虫操作，直接等待后端返回
+export const fetchFundDetails = async (fund: Fund): Promise<Fund> => {
+    try {
+        // 假设后端新增了详情接口 /api/fund/{code}
+        const response = await fetch(`${API_BASE}/api/fund/${fund.code}`);
+        if (!response.ok) throw new Error("Backend detail fetch failed");
         
-        // Convert timestamp to date string
-        const date = new Date(lastPoint.x);
-        updatedFund.lastNavDate = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+        const data = await response.json();
         
-        // If we have history, we can generate the real chart data later
-        // For now, we store the full history implies getting it on demand in the detail view
-        // to avoid storing huge JSON in localStorage.
+        // 期望后端返回: { manager: string, holdings: Stock[], ... }
+        return {
+            ...fund,
+            manager: data.manager || fund.manager,
+            // 如果后端返回了持仓数组，直接使用
+            holdings: Array.isArray(data.holdings) ? data.holdings.map((h: any) => ({
+                code: h.code,
+                name: h.name,
+                percent: parseFloat(h.percent || 0), // 后端解决持仓占比获取问题
+                currentPrice: parseFloat(h.currentPrice || 0),
+                changePercent: parseFloat(h.changePercent || 0)
+            })) : fund.holdings
+        };
+    } catch (error) {
+        console.warn(`Detail fetch failed for ${fund.code}, using fallback.`, error);
+        return fund;
     }
-
-    // Update Holdings (Stocks)
-    // NOTE: Without backend, we CANNOT get the % weight from pingzhongdata.
-    // We only get the codes. We will assume equal weight or just list them.
-    if (stockCodes && Array.isArray(stockCodes)) {
-        // Fetch Real-time Stock Data for these codes via Sina
-        const stockMap = await fetchStockDetails(stockCodes.slice(0, 10)); // Top 10
-        
-        const holdings: Stock[] = stockCodes.slice(0, 10).map((code: string) => {
-            const info = stockMap.get(code);
-            return {
-                code: code,
-                name: info?.name || code,
-                percent: 0, // Unknown without backend HTML scraping
-                currentPrice: info?.price || 0,
-                changePercent: info?.change || 0
-            };
-        });
-        
-        updatedFund.holdings = holdings;
-    }
-
-    return updatedFund;
 };
 
-// 4. 批量更新 (Combined Estimate + Detail Check)
+// 4. 获取历史净值 (Backend)
+export const getFundHistoryData = async (fundCode: string) => {
+    try {
+        // 假设后端新增了历史接口 /api/history/{code}
+        const response = await fetch(`${API_BASE}/api/history/${fundCode}`);
+        if (!response.ok) return [];
+        
+        const data = await response.json();
+        // 期望后端返回: [{ date: '2023-01-01', value: 1.2345 }, ...]
+        if (Array.isArray(data)) {
+            return data.map((item: any) => ({
+                date: item.date,
+                value: parseFloat(item.value),
+                change: 0 // 可选
+            }));
+        }
+        return [];
+    } catch (error) {
+        console.warn(`History fetch failed for ${fundCode}`, error);
+        return [];
+    }
+};
+
+// 5. 批量更新 (Backend Estimate)
 export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]> => {
-    // 1. Get Lightweight Estimates first (Fast)
     const promises = currentFunds.map(async (fund) => {
         const realData = await fetchRealTimeEstimate(fund.code);
         
@@ -272,7 +175,7 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
         let lastNavDate = fund.lastNavDate;
 
         if (realData) {
-            // fundgz gives 'dwjz' (Yesterday NAV) and 'gsz' (Realtime Estimate)
+            // gsz: 估算值, dwjz: 昨日净值, gszzl: 估算涨跌幅
             lastNav = parseFloat(realData.dwjz || fund.lastNav);
             lastNavDate = realData.jzrq || fund.lastNavDate;
             estimatedNav = parseFloat(realData.gsz || lastNav);
@@ -296,34 +199,14 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
     return await Promise.all(promises);
 };
 
-// 5. 获取详细历史数据 (For Detail View)
-export const getFundHistoryData = async (fundCode: string) => {
-    const url = `https://fund.eastmoney.com/pingzhongdata/${fundCode}.js?v=${Date.now()}`;
-    await loadScript(url);
-    const w = window as any;
-    
-    // Data_netWorthTrend: [{x: timestamp, y: nav, equityReturn: change}, ...]
-    // Data_ACWorthTrend: [{x: timestamp, y: nav}, ...] (Cumulative)
-    
-    const rawHistory = w.Data_netWorthTrend;
-    if (rawHistory && Array.isArray(rawHistory)) {
-        return rawHistory.map((item: any) => ({
-            date: new Date(item.x).toISOString().split('T')[0],
-            value: parseFloat(item.y),
-            change: parseFloat(item.equityReturn)
-        }));
-    }
-    return [];
-};
-
 // 辅助：获取某个日期的净值
 export const getNavByDate = async (fundCode: string, dateStr: string): Promise<number> => {
     const realData = await fetchRealTimeEstimate(fundCode);
-    if (realData) return parseFloat(realData.dwjz);
+    if (realData && realData.dwjz) return parseFloat(realData.dwjz);
     return 1.0;
 };
 
-// Mock 模拟获取板块指数
+// 板块指数 (Mock)
 export const getSectorIndices = (): SectorIndex[] => {
     return [
         { name: '中证白酒', changePercent: 1.24, score: 85, leadingStock: '贵州茅台' },
@@ -334,7 +217,9 @@ export const getSectorIndices = (): SectorIndex[] => {
     ];
 };
 
+// 回测逻辑 (前端计算)
 export const runBacktest = (portfolio: { code: string, amount: number }[], durationYears: number): BacktestResult => {
+    // 这里暂时保持前端模拟逻辑，如果后端提供了 /api/backtest，可替换为 fetch 调用
     const baseReturn = durationYears * 5; 
     const volatility = Math.random() * 10;
     const finalReturn = baseReturn + (Math.random() > 0.5 ? volatility : -volatility);
@@ -349,9 +234,4 @@ export const runBacktest = (portfolio: { code: string, amount: number }[], durat
             value: 10000 * (1 + (i * finalReturn / 2000))
         }))
     };
-};
-
-// Legacy generator (replaced by getFundHistoryData)
-export const generateHistory = (fundCode: string, days: number): number[] => {
-    return [];
 };

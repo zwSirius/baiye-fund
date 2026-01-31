@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Fund, Transaction } from '../types';
-import { getFundHistoryData, fetchFundDetailsFromPingzhong } from '../services/fundService';
+import { getFundHistoryData, fetchFundDetails } from '../services/fundService';
 import { ChevronLeft, Info, FileText, User, ShieldAlert, Edit2, Trash2, History, TrendingUp, Wallet, Loader2, AlertCircle } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -47,17 +47,15 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
         setIsLoadingHistory(true);
         setIsLoadingDetails(true);
 
-        // 1. Get History
+        // 1. Get History (via Backend)
         const history = await getFundHistoryData(fund.code);
         setRealHistory(history);
         setIsLoadingHistory(false);
 
-        // 2. Get Details (Holdings)
-        // Only fetch if we don't have holdings or name is generic
-        if (fund.holdings.length === 0 || fund.manager === '未知') {
-             const details = await fetchFundDetailsFromPingzhong(fund);
-             setDetailedFund(prev => ({ ...prev, ...details }));
-        }
+        // 2. Get Details (via Backend)
+        // Always fetch to get latest holdings
+        const details = await fetchFundDetails(fund);
+        setDetailedFund(prev => ({ ...prev, ...details }));
         setIsLoadingDetails(false);
     };
     loadData();
@@ -236,7 +234,7 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                     <div className="flex items-center gap-2 mb-4">
                         <FileText size={18} className="text-blue-500" />
                         <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm">持仓明细 (Top 10)</h3>
-                        <span className="text-[10px] text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded">占比数据仅后端可见</span>
+                        {/* 移除CORS警告提示，因为现在走后端了 */}
                     </div>
                     
                     {isLoadingDetails ? (
@@ -270,13 +268,6 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                             )}
                         </div>
                     )}
-                </div>
-                
-                <div className="px-4 py-2">
-                     <div className="bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-300 p-3 rounded-lg text-xs flex gap-2">
-                        <AlertCircle size={16} className="flex-shrink-0" />
-                        <span>由于浏览器安全限制(CORS)，纯前端模式无法获取精确的持仓占比(%)。以上股票列表及涨跌幅为真实即时数据。</span>
-                     </div>
                 </div>
             </div>
           ) : (
