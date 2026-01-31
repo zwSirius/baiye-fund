@@ -61,27 +61,26 @@ export const importData = (jsonString: string): boolean => {
     }
 };
 
-// --- 全新纯后端 API 接口 ---
+// --- API 接口 ---
 
-// 1. 搜索基金 (Backend)
+// 1. 搜索基金 (Backend Normalized Response)
 export const searchFunds = async (query: string): Promise<Fund[]> => {
   if (!query) return [];
   try {
     const response = await fetch(`${API_BASE}/api/search?key=${encodeURIComponent(query)}`);
     const data = await response.json();
     
-    // 适配后端返回格式 (假设后端透传或标准化了数据)
-    // 如果后端返回 [{ "基金代码": "...", "基金简称": "..." }]
+    // 后端现在返回统一的: [{ code: "...", name: "...", type: "..." }]
     if (Array.isArray(data)) {
         return data.map((item: any) => ({
-            id: `temp_${item.CODE || item['基金代码']}`,
-            code: item.CODE || item['基金代码'],
-            name: item.NAME || item['基金简称'],
+            id: `temp_${item.code}`,
+            code: item.code,
+            name: item.name,
             manager: "暂无",
             lastNav: 0,
             lastNavDate: "",
             holdings: [],
-            tags: [item.FundType || item['基金类型'] || "混合型"], 
+            tags: [item.type || "混合型"], 
             estimatedNav: 0,
             estimatedChangePercent: 0,
             estimatedProfit: 0,
@@ -111,49 +110,45 @@ export const fetchRealTimeEstimate = async (fundCode: string) => {
     }
 };
 
-// 3. 获取基金详情：持仓、经理等 (Backend)
-// 前端不再进行任何爬虫操作，直接等待后端返回
+// 3. 获取基金详情 (Backend Normalized Response)
 export const fetchFundDetails = async (fund: Fund): Promise<Fund> => {
     try {
-        // 假设后端新增了详情接口 /api/fund/{code}
         const response = await fetch(`${API_BASE}/api/fund/${fund.code}`);
         if (!response.ok) throw new Error("Backend detail fetch failed");
         
         const data = await response.json();
         
-        // 期望后端返回: { manager: string, holdings: Stock[], ... }
+        // 后端返回: { manager: string, holdings: [{ code, name, percent }] }
         return {
             ...fund,
             manager: data.manager || fund.manager,
-            // 如果后端返回了持仓数组，直接使用
             holdings: Array.isArray(data.holdings) ? data.holdings.map((h: any) => ({
                 code: h.code,
                 name: h.name,
-                percent: parseFloat(h.percent || 0), // 后端解决持仓占比获取问题
+                percent: parseFloat(h.percent || 0),
                 currentPrice: parseFloat(h.currentPrice || 0),
                 changePercent: parseFloat(h.changePercent || 0)
             })) : fund.holdings
         };
     } catch (error) {
-        console.warn(`Detail fetch failed for ${fund.code}, using fallback.`, error);
+        console.warn(`Detail fetch failed for ${fund.code}`, error);
         return fund;
     }
 };
 
-// 4. 获取历史净值 (Backend)
+// 4. 获取历史净值 (Backend Normalized Response)
 export const getFundHistoryData = async (fundCode: string) => {
     try {
-        // 假设后端新增了历史接口 /api/history/{code}
         const response = await fetch(`${API_BASE}/api/history/${fundCode}`);
         if (!response.ok) return [];
         
         const data = await response.json();
-        // 期望后端返回: [{ date: '2023-01-01', value: 1.2345 }, ...]
+        // 后端返回: [{ date: '2023-01-01', value: 1.2345 }]
         if (Array.isArray(data)) {
             return data.map((item: any) => ({
                 date: item.date,
                 value: parseFloat(item.value),
-                change: 0 // 可选
+                change: 0 
             }));
         }
         return [];
@@ -219,7 +214,6 @@ export const getSectorIndices = (): SectorIndex[] => {
 
 // 回测逻辑 (前端计算)
 export const runBacktest = (portfolio: { code: string, amount: number }[], durationYears: number): BacktestResult => {
-    // 这里暂时保持前端模拟逻辑，如果后端提供了 /api/backtest，可替换为 fetch 调用
     const baseReturn = durationYears * 5; 
     const volatility = Math.random() * 10;
     const finalReturn = baseReturn + (Math.random() > 0.5 ? volatility : -volatility);
