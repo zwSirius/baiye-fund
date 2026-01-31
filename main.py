@@ -68,19 +68,27 @@ def _get_current_china_time():
     """获取当前中国时间"""
     return datetime.utcnow() + timedelta(hours=8)
 
-def _is_trading_time():
-    """判断当前是否为交易时间（简单判断：周末不交易）"""
+def _get_time_phase():
+    """
+    获取当前时间阶段
+    Returns: 'PRE_MARKET' | 'MARKET' | 'POST_MARKET' | 'WEEKEND'
+    """
     now = _get_current_china_time()
-    # 0=Mon, 5=Sat, 6=Sun
+    
+    # 周末 (周六=5, 周日=6)
     if now.weekday() >= 5:
-        return False
-    # 这里可以进一步判断 9:30-15:00，但用户主要关注周末问题，且盘后也需要显示估值（虽然不动）
-    # 如果是周末，绝对不进行实时计算
-    return True
-
-def _get_current_china_date_str():
-    """获取当前中国日期的字符串 (YYYY-MM-DD)"""
-    return _get_current_china_time().strftime("%Y-%m-%d")
+        return 'WEEKEND'
+    
+    t = now.time()
+    # 00:00 - 09:30 盘前
+    if t < time(9, 30):
+        return 'PRE_MARKET'
+    # 09:30 - 15:00 盘中
+    elif t <= time(15, 0):
+        return 'MARKET'
+    # 15:00 - 24:00 盘后
+    else:
+        return 'POST_MARKET'
 
 def _get_fund_holdings_internal(code: str):
     """获取持仓 (带缓存)"""
@@ -153,7 +161,6 @@ def _get_stock_realtime_quotes(stock_codes: list):
             for item in data['data']['diff']:
                 stock_code = item.get('f12')
                 change_pct = item.get('f3')
-                # 处理停牌或无数据的情况 "-"
                 try:
                     val = float(change_pct)
                 except (ValueError, TypeError):
@@ -167,10 +174,6 @@ def _get_stock_realtime_quotes(stock_codes: list):
 
 def _calculate_estimate_via_holdings(code: str, last_nav: float):
     """通过持仓计算实时估值"""
-    # 周末不计算，直接返回 None，让外层使用兜底逻辑 (gszzl=0)
-    if not _is_trading_time():
-        return None
-
     holdings = _get_fund_holdings_internal(code)
     if not holdings: return None
     
@@ -188,9 +191,18 @@ def _calculate_estimate_via_holdings(code: str, last_nav: float):
         
         total_weighted_change += (change * weight)
         total_weight += weight
-        
-    # 简易修正系数 1.1 (经验值)
-    estimated_change_percent = (total_weighted_change / 100.0) * 1.1
+    
+    # 如果没取到权重或行情，返回 None
+    if total_weight == 0: return None
+
+    # 简易修正系数 1.0 (重仓股通常占50%-70%仓位，这里仅计算重仓股的加权涨跌作为基金整体涨跌的近似)
+    # 为了更准确，可以假设剩余仓位涨跌为0或跟随大盘，这里简单处理：
+    # 假设重仓股代表了基金的波动方向。
+    # 归一化权重：如果前十大只占50%，那么这50%的波动贡献了多少？
+    # 简单模型：(Sum(Weight * Change)) / 100
+    estimated_change_percent = (total_weighted_change / 100.0)
+    
+    # 某些基金波动大，可能需要乘系数，比如 0.9 或 1.1，这里暂用 1.0
     estimated_nav = last_nav * (1 + estimated_change_percent / 100.0)
     
     return {
@@ -224,23 +236,16 @@ def search_funds(key: str = Query(..., min_length=1)):
 def get_market_indices(codes: str = Query(None)):
     """
     获取市场指数/板块
-    codes: 逗号分隔的 secid，例如 "1.000001,0.399006"
     """
-    # 默认值
     default_codes = ["1.000001", "0.399001", "0.399006", "0.399997", "0.399976"]
-    
-    if codes:
-        target_codes = codes.split(',')
-    else:
-        target_codes = default_codes
-
+    target_codes = codes.split(',') if codes else default_codes
     if not target_codes: return []
 
     secids = ",".join(target_codes)
     url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f3,f12,f14,f2&secids={secids}"
     
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "User-Agent": "Mozilla/5.0",
         "Referer": "http://quote.eastmoney.com/"
     }
 
@@ -254,10 +259,8 @@ def get_market_indices(codes: str = Query(None)):
                     change = float(item['f3'])
                 except (ValueError, TypeError):
                     change = 0.0
-                
                 score = 50 + change * 10 
                 score = max(0, min(100, score))
-                
                 result.append({
                     "name": item['f14'],
                     "code": item['f12'], 
@@ -274,8 +277,22 @@ def get_market_indices(codes: str = Query(None)):
 
 @app.get("/api/estimate/{code}")
 def get_estimate(code: str):
-    data = {"fundcode": code, "gsz": "0", "gszzl": "0", "dwjz": "0", "name": "", "jzrq": ""}
+    """
+    核心估值接口：严格按照时间段逻辑返回数据
+    """
+    # 基础结构
+    data = {
+        "fundcode": code, 
+        "gsz": "0", "gszzl": "0", 
+        "dwjz": "0", "jzrq": "", 
+        "name": "", 
+        "source": "official"
+    }
     
+    phase = _get_time_phase()
+    today_str = _get_current_china_date_str()
+    
+    # 1. 无论什么阶段，先获取官方实时/收盘数据 (轻量级)
     try:
         timestamp = int(datetime.now().timestamp() * 1000)
         url = f"http://fundgz.1234567.com.cn/js/gszzl_{code}.js?rt={timestamp}"
@@ -287,66 +304,104 @@ def get_estimate(code: str):
             if fetched: data.update(fetched)
     except: pass
 
-    current_dwjz = 0.0
-    latest_jzrq = ""
-    # 尝试获取历史净值以作为兜底
+    # 2. 获取历史净值 (Akshare) 用于计算真实涨跌和兜底
+    #    注意：akshare 返回的是已确认的净值，通常T日的净值在T+1日能查到，或者T日晚间
+    history_df = pd.DataFrame()
     try:
-        if str(data.get("dwjz")) == "0":
-            history_df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
-            if not history_df.empty:
-                latest = history_df.iloc[-1]
-                current_dwjz = float(latest['单位净值'])
-                latest_jzrq = str(latest['净值日期'])
-                data['dwjz'] = str(current_dwjz)
-                data['jzrq'] = latest_jzrq
-        else:
-            current_dwjz = float(data.get("dwjz"))
-            latest_jzrq = data.get("jzrq")
+        history_df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
     except: pass
 
-    now = _get_current_china_time()
-    
-    # --- 修复周末/休市不显示涨跌幅的问题 ---
-    # 如果处于非交易时间，且官方 gsz/gszzl 为 0 或无效，
-    # 我们应该计算最近一个交易日的真实涨跌幅并返回给前端显示，而不是显示 0.00%
-    if not _is_trading_time():
-        data['gsz'] = str(current_dwjz)
-        
-        # 尝试获取最近两日的净值来计算真实的涨跌幅
-        try:
-            history_df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
+    # --- 辅助函数：从历史计算真实涨跌 ---
+    def set_real_data_from_history():
+        if not history_df.empty:
+            latest = history_df.iloc[-1]
+            data['dwjz'] = str(latest['单位净值'])
+            data['jzrq'] = str(latest['净值日期'])
+            
+            # 计算真实涨跌幅: (Latest - Prev) / Prev
             if len(history_df) >= 2:
-                last_nav = float(history_df.iloc[-1]['单位净值'])
-                prev_nav = float(history_df.iloc[-2]['单位净值'])
+                prev = history_df.iloc[-2]
+                last_nav = float(latest['单位净值'])
+                prev_nav = float(prev['单位净值'])
                 if prev_nav > 0:
-                    change_pct = ((last_nav - prev_nav) / prev_nav) * 100
-                    data['gszzl'] = "{:.2f}".format(change_pct)
-                else:
-                    data['gszzl'] = "0.00"
+                    change = ((last_nav - prev_nav) / prev_nav) * 100
+                    data['gsz'] = str(last_nav) # 显示真实净值
+                    data['gszzl'] = "{:.2f}".format(change) # 显示真实涨跌
+                    data['source'] = 'real_history' # 标记源
             else:
-                 data['gszzl'] = "0.00"
-        except:
-             data['gszzl'] = "0.00"
+                data['gsz'] = str(latest['单位净值'])
+                data['gszzl'] = "0.00"
 
+    # --- 阶段逻辑 ---
+
+    # A. 盘前 / 周末 / 节假日
+    if phase == 'PRE_MARKET' or phase == 'WEEKEND':
+        # 逻辑：显示上一个交易日的真实净值及涨跌幅
+        set_real_data_from_history()
         return data
 
-    # 交易时间逻辑
-    has_valid_official_est = (str(data.get("gsz")) != "0" and data.get("gszzl") != "0")
-    
-    if not has_valid_official_est and current_dwjz > 0:
-        try:
-            calc = _calculate_estimate_via_holdings(code, current_dwjz)
+    # B. 盘中 (09:30 - 15:00)
+    if phase == 'MARKET':
+        # 逻辑：优先官方估值 -> 官方失效则重仓股估值
+        official_gszzl = float(data.get("gszzl", 0))
+        
+        if official_gszzl != 0:
+            # 官方数据有效，直接返回 (已在步骤1获取)
+            return data
+        else:
+            # 官方失效 (0.00)，启用重仓股实时计算
+            # 基准净值：取历史最新的净值 (昨日收盘)
+            last_nav = 1.0
+            if not history_df.empty:
+                last_nav = float(history_df.iloc[-1]['单位净值'])
+            
+            calc = _calculate_estimate_via_holdings(code, last_nav)
             if calc:
                 data['gsz'] = calc['gsz']
                 data['gszzl'] = calc['gszzl']
                 data['source'] = "holdings_calc"
-        except Exception as e:
-            logger.error(f"Holdings calc failed for {code}: {e}")
+            return data
 
-    # 兜底
-    if str(data.get("gsz")) == "0" and current_dwjz > 0:
-         data['gsz'] = str(current_dwjz)
-         data['gszzl'] = "0.00"
+    # C. 盘后 (15:00 - 24:00)
+    if phase == 'POST_MARKET':
+        # 逻辑：检查今日净值是否更新
+        # data['jzrq'] 是官方接口返回的净值日期
+        official_jzrq = data.get('jzrq', '')
+        
+        if official_jzrq == today_str:
+            # 官方已更新今日净值 -> 显示今日真实净值及涨跌
+            # 需要计算涨跌幅：今日净值 (data['dwjz']) vs 昨日净值 (history_df[-1])
+            # 注意：如果akshare还没更新今日的，history_df[-1]就是昨日的
+            current_nav = float(data.get('dwjz', 0))
+            if not history_df.empty:
+                # 假设akshare还没更新，history最后一个是昨日
+                # 检查日期：如果history最后一个日期也是今天，那取倒数第二个
+                last_hist = history_df.iloc[-1]
+                prev_nav = 0
+                if str(last_hist['净值日期']) == today_str:
+                     if len(history_df) >= 2:
+                         prev_nav = float(history_df.iloc[-2]['单位净值'])
+                else:
+                     prev_nav = float(last_hist['单位净值'])
+                
+                if prev_nav > 0 and current_nav > 0:
+                    change = ((current_nav - prev_nav) / prev_nav) * 100
+                    data['gsz'] = str(current_nav)
+                    data['gszzl'] = "{:.2f}".format(change)
+                    data['source'] = "real_updated"
+            return data
+        else:
+            # 官方尚未更新今日净值 -> 依旧通过重仓股计算 (此时用的是收盘价，相当于收盘预估)
+            last_nav = 1.0
+            if not history_df.empty:
+                last_nav = float(history_df.iloc[-1]['单位净值'])
+            
+            calc = _calculate_estimate_via_holdings(code, last_nav)
+            if calc:
+                data['gsz'] = calc['gsz']
+                data['gszzl'] = calc['gszzl']
+                data['source'] = "holdings_close_est"
+            return data
 
     return data
 

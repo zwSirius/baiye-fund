@@ -7,10 +7,11 @@ interface WatchlistProps {
   onAdd: () => void;
   onRemove: (fund: Fund) => void;
   onRefresh: () => void;
+  onFundClick: (fund: Fund) => void;
   isRefreshing: boolean;
 }
 
-export const Watchlist: React.FC<WatchlistProps> = ({ funds, onAdd, onRemove, onRefresh, isRefreshing }) => {
+export const Watchlist: React.FC<WatchlistProps> = ({ funds, onAdd, onRemove, onRefresh, onFundClick, isRefreshing }) => {
   return (
     <div className="pb-24 animate-fade-in">
       <div className="bg-white dark:bg-slate-900 sticky top-[72px] z-20 border-b border-slate-100 dark:border-slate-800 px-4 py-3 flex justify-between items-center shadow-sm">
@@ -36,7 +37,11 @@ export const Watchlist: React.FC<WatchlistProps> = ({ funds, onAdd, onRemove, on
              </div>
          ) : (
              funds.map(fund => (
-                 <div key={fund.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 relative group">
+                 <div 
+                    key={fund.id} 
+                    onClick={() => onFundClick(fund)}
+                    className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 relative group active:scale-[0.98] transition cursor-pointer"
+                 >
                      <div className="flex justify-between items-start mb-2">
                          <div>
                              <div className="font-bold text-slate-800 dark:text-slate-100 text-base">{fund.name}</div>

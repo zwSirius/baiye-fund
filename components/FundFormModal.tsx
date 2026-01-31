@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Fund, Group } from '../types';
+import { Fund, Group, Transaction } from '../types';
 import { searchFunds, fetchRealTimeEstimate } from '../services/fundService';
 import { X, Search, Loader2, Plus, Check, Users, DollarSign, PieChart, Eye } from 'lucide-react';
 
@@ -67,8 +67,9 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
   }, [query, step]);
 
   const handleSelect = async (fund: Fund) => {
-    // 修复：自选模式下，直接保存并关闭，不需要输入任何信息
-    if (isWatchlistMode) {
+    // 强制检查：自选模式下，直接保存并退出
+    if (isWatchlistMode === true) {
+        setIsLoadingDetails(true);
         // 尝试获取最新数据，确保列表显示不为0
         const realData = await fetchRealTimeEstimate(fund.code);
         const id = `${fund.code}_watchlist_${Date.now()}`;
@@ -98,11 +99,14 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
             realizedProfit: 0,
             isWatchlist: true
         };
+        
+        setIsLoadingDetails(false);
         onSave(newFund);
-        onClose();
-        return;
+        onClose(); // 直接关闭，不再进行后续 UI 更新
+        return; 
     }
 
+    // 非自选模式，进入配置页
     setIsLoadingDetails(true);
     const realData = await fetchRealTimeEstimate(fund.code);
     setIsLoadingDetails(false);
@@ -130,15 +134,34 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
     const groupId = selectedGroup;
     const fundCode = selectedFund.code;
     const id = initialFund ? initialFund.id : `${fundCode}_${groupId}_${Date.now()}`;
+    
+    const holdingShares = parseFloat(shares) || 0;
+    const holdingCost = parseFloat(cost) || 0;
+
+    // 自动生成初始交易记录 (如果是新添加且没有交易记录)
+    let transactions = initialFund?.transactions || [];
+    if (!initialFund && holdingShares > 0) {
+        const initialTx: Transaction = {
+            id: `init_${Date.now()}`,
+            type: 'BUY',
+            date: new Date().toISOString().split('T')[0], // 默认为今天
+            amount: holdingShares * holdingCost,
+            shares: holdingShares,
+            nav: holdingCost, // 假设成本即为买入净值
+            fee: 0 // 初始导入忽略费率
+        };
+        transactions = [initialTx];
+    }
 
     const newFund: Fund = {
       ...selectedFund,
       id: id,
       groupId: groupId,
-      holdingShares: parseFloat(shares) || 0,
-      holdingCost: parseFloat(cost) || 0,
+      holdingShares: holdingShares,
+      holdingCost: holdingCost,
       realizedProfit: parseFloat(realizedProfit) || 0,
-      isWatchlist: false
+      isWatchlist: false,
+      transactions: transactions
     };
     onSave(newFund);
     onClose();
@@ -165,7 +188,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
           {isLoadingDetails && (
               <div className="absolute inset-0 bg-white/80 dark:bg-slate-900/80 z-20 flex flex-col items-center justify-center">
                   <Loader2 className="animate-spin text-blue-500 mb-2" size={32} />
-                  <span className="text-sm font-bold text-slate-600 dark:text-slate-300">获取实时净值中...</span>
+                  <span className="text-sm font-bold text-slate-600 dark:text-slate-300">获取数据中...</span>
               </div>
           )}
 
@@ -210,7 +233,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
             </div>
           )}
 
-          {step === 'input' && selectedFund && (
+          {step === 'input' && selectedFund && !isWatchlistMode && (
              <div className="space-y-4">
                 <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-blue-100 dark:border-blue-900 shadow-sm">
                    <div className="text-sm text-slate-500 dark:text-slate-400 mb-1">当前基金</div>
@@ -291,7 +314,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
           )}
         </div>
 
-        {step === 'input' && (
+        {step === 'input' && !isWatchlistMode && (
           <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900">
             <button 
               onClick={handleConfirm}

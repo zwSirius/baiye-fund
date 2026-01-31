@@ -350,6 +350,7 @@ const App: React.FC = () => {
                 onAdd={openWatchlistAddModal}
                 onRemove={handleDeleteFund}
                 onRefresh={handleRefresh}
+                onFundClick={(fund) => setSelectedFund(fund)}
                 isRefreshing={isRefreshing}
             />
         )}
