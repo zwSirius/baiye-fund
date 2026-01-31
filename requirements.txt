@@ -1,5 +1,7 @@
-fastapi==0.109.0
-uvicorn==0.27.0
-akshare==1.12.98
-pandas==2.2.0
-requests==2.31.0
+fastapi
+uvicorn
+akshare
+pandas
+requests
+lxml
+beautifulsoup4
