@@ -15,8 +15,9 @@ const API_BASE = isProd ? '' : 'http://127.0.0.1:7860';
 // --- 本地存储键名 ---
 const STORAGE_KEY_FUNDS = 'smartfund_funds_v1';
 const STORAGE_KEY_GROUPS = 'smartfund_groups_v1';
+const STORAGE_KEY_MARKET_CONFIG = 'smartfund_market_config_v1';
 
-// --- Storage & Data Management (保持不变) ---
+// --- Storage & Data Management ---
 
 export const saveFundsToLocal = (funds: Fund[]) => {
     localStorage.setItem(STORAGE_KEY_FUNDS, JSON.stringify(funds));
@@ -31,9 +32,9 @@ export const getStoredGroups = () => {
     if (stored) {
         return JSON.parse(stored);
     }
+    // 修改：默认只有我的账户
     return [
-        { id: 'default', name: '我的账户', isDefault: true },
-        { id: 'wife', name: '老婆账户', isDefault: false }
+        { id: 'default', name: '我的账户', isDefault: true }
     ];
 };
 
@@ -45,10 +46,25 @@ export const getInitialFunds = (): Fund[] => {
   return [];
 };
 
+// 市场板块配置存储
+export const getStoredMarketCodes = (): string[] => {
+    const stored = localStorage.getItem(STORAGE_KEY_MARKET_CONFIG);
+    if (stored) {
+        return JSON.parse(stored);
+    }
+    // 默认显示：上证、深证、创业板、白酒、新能源
+    return ["1.000001", "0.399001", "0.399006", "0.399997", "0.399976"];
+};
+
+export const saveMarketCodes = (codes: string[]) => {
+    localStorage.setItem(STORAGE_KEY_MARKET_CONFIG, JSON.stringify(codes));
+};
+
 export const exportData = () => {
     const data = {
         funds: getInitialFunds(),
         groups: getStoredGroups(),
+        marketConfig: getStoredMarketCodes(),
         timestamp: Date.now(),
         version: '1.0'
     };
@@ -61,6 +77,7 @@ export const importData = (jsonString: string): boolean => {
         if (data.funds && data.groups) {
             saveFundsToLocal(data.funds);
             saveGroupsToLocal(data.groups);
+            if (data.marketConfig) saveMarketCodes(data.marketConfig);
             return true;
         }
         return false;
@@ -96,7 +113,8 @@ export const searchFunds = async (query: string): Promise<Fund[]> => {
             holdingShares: 0,
             holdingCost: 0,
             realizedProfit: 0,
-            transactions: []
+            transactions: [],
+            isWatchlist: false
         }));
     }
     return [];
@@ -164,23 +182,20 @@ export const getFundHistoryData = async (fundCode: string) => {
     }
 };
 
-// 5. 获取市场指数 (Real)
-export const fetchMarketIndices = async (): Promise<SectorIndex[]> => {
+// 5. 获取市场指数 (支持自定义代码)
+export const fetchMarketIndices = async (codes?: string[]): Promise<SectorIndex[]> => {
     try {
-        const response = await fetch(`${API_BASE}/api/market`);
+        // 如果没有传入 codes，使用本地存储的配置
+        const targetCodes = codes || getStoredMarketCodes();
+        const param = targetCodes.join(',');
+        
+        const response = await fetch(`${API_BASE}/api/market?codes=${param}`);
         if (!response.ok) throw new Error("Market fetch failed");
         const data = await response.json();
         return data;
     } catch (e) {
         console.warn("Market indices fetch failed (using mock data):", e);
-        // Fallback Mock
-        return [
-            { name: '上证指数', changePercent: 0, score: 50, leadingStock: '--' },
-            { name: '创业板指', changePercent: 0, score: 50, leadingStock: '--' },
-            { name: '中证白酒', changePercent: 0, score: 50, leadingStock: '--' },
-            { name: '新能源车', changePercent: 0, score: 50, leadingStock: '--' },
-            { name: '半导体', changePercent: 0, score: 50, leadingStock: '--' }
-        ];
+        return [];
     }
 };
 

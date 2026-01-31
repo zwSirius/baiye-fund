@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Fund, Group } from '../types';
 import { searchFunds, fetchRealTimeEstimate } from '../services/fundService';
-import { X, Search, Loader2, Plus, Check, Users, DollarSign, PieChart } from 'lucide-react';
+import { X, Search, Loader2, Plus, Check, Users, DollarSign, PieChart, Eye } from 'lucide-react';
 
 interface FundFormModalProps {
   isOpen: boolean;
@@ -10,9 +10,10 @@ interface FundFormModalProps {
   initialFund?: Fund | null;
   groups: Group[];
   currentGroupId: string;
+  isWatchlistMode?: boolean; // 新增：是否为添加自选模式
 }
 
-export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, onSave, initialFund, groups, currentGroupId }) => {
+export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, onSave, initialFund, groups, currentGroupId, isWatchlistMode = false }) => {
   const [step, setStep] = useState<'search' | 'input'>('search');
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Fund[]>([]);
@@ -66,8 +67,41 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
   }, [query, step]);
 
   const handleSelect = async (fund: Fund) => {
+    // 如果是自选模式，直接保存，不需要输入份额
+    if (isWatchlistMode) {
+        // Fetch nav for display
+        const realData = await fetchRealTimeEstimate(fund.code);
+        const id = `${fund.code}_watchlist_${Date.now()}`;
+        
+        let estimatedNav = 0;
+        let estimatedChangePercent = 0;
+        let lastNav = 0;
+
+        if (realData) {
+             lastNav = parseFloat(realData.dwjz);
+             estimatedNav = parseFloat(realData.gsz || realData.dwjz);
+             estimatedChangePercent = parseFloat(realData.gszzl || "0");
+        }
+
+        const newFund: Fund = {
+            ...fund,
+            id,
+            name: realData?.name || fund.name,
+            lastNav,
+            estimatedNav,
+            estimatedChangePercent,
+            groupId: 'watchlist', // 虚拟组
+            holdingShares: 0,
+            holdingCost: 0,
+            realizedProfit: 0,
+            isWatchlist: true
+        };
+        onSave(newFund);
+        onClose();
+        return;
+    }
+
     setIsLoadingDetails(true);
-    // Fetch latest NAV before editing
     const realData = await fetchRealTimeEstimate(fund.code);
     setIsLoadingDetails(false);
 
@@ -102,6 +136,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
       holdingShares: parseFloat(shares) || 0,
       holdingCost: parseFloat(cost) || 0,
       realizedProfit: parseFloat(realizedProfit) || 0,
+      isWatchlist: false
     };
     onSave(newFund);
     onClose();
@@ -115,8 +150,9 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
       <div className="bg-white dark:bg-slate-900 w-full max-w-md h-[90vh] sm:h-auto sm:rounded-2xl rounded-t-2xl shadow-xl z-10 flex flex-col overflow-hidden animate-slide-up sm:animate-fade-in">
         
         <div className="flex justify-between items-center p-4 border-b border-slate-100 dark:border-slate-800">
-          <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">
-            {initialFund ? '编辑持仓' : (step === 'search' ? '添加基金' : '配置持仓')}
+          <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+            {isWatchlistMode ? <Eye className="text-blue-500" size={20}/> : null}
+            {isWatchlistMode ? '添加自选基金' : (initialFund ? '编辑持仓' : (step === 'search' ? '添加持仓' : '配置持仓'))}
           </h3>
           <button onClick={onClose} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 dark:text-slate-400">
             <X size={24} />
@@ -124,7 +160,6 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
         </div>
 
         <div className="flex-1 overflow-y-auto bg-slate-50 dark:bg-slate-950 p-4 relative">
-          {/* Loading Overlay */}
           {isLoadingDetails && (
               <div className="absolute inset-0 bg-white/80 dark:bg-slate-900/80 z-20 flex flex-col items-center justify-center">
                   <Loader2 className="animate-spin text-blue-500 mb-2" size={32} />

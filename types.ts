@@ -1,3 +1,4 @@
+
 export interface Stock {
   code: string;
   name: string;
@@ -46,10 +47,12 @@ export interface Fund {
   holdingCost: number; // 持仓成本 (单位净值成本)
   realizedProfit: number; // 已落袋收益 (累计收益修正项)
   transactions: Transaction[]; // 交易记录
+  isWatchlist?: boolean; // 是否仅为自选关注
 }
 
 export interface SectorIndex {
   name: string;
+  code: string; // Add code to track it
   changePercent: number;
   score: number; // 0-100 hot score
   leadingStock: string; // 领涨股
@@ -64,6 +67,7 @@ export interface MarketSentiment {
 
 export enum TabView {
   DASHBOARD = 'DASHBOARD',
+  WATCHLIST = 'WATCHLIST', // 新增自选页
   MARKET = 'MARKET',
   TOOLS = 'TOOLS',
   BACKTEST = 'BACKTEST',

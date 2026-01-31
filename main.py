@@ -68,6 +68,16 @@ def _get_current_china_time():
     """获取当前中国时间"""
     return datetime.utcnow() + timedelta(hours=8)
 
+def _is_trading_time():
+    """判断当前是否为交易时间（简单判断：周末不交易）"""
+    now = _get_current_china_time()
+    # 0=Mon, 5=Sat, 6=Sun
+    if now.weekday() >= 5:
+        return False
+    # 这里可以进一步判断 9:30-15:00，但用户主要关注周末问题，且盘后也需要显示估值（虽然不动）
+    # 如果是周末，绝对不进行实时计算
+    return True
+
 def _get_current_china_date_str():
     """获取当前中国日期的字符串 (YYYY-MM-DD)"""
     return _get_current_china_time().strftime("%Y-%m-%d")
@@ -157,6 +167,10 @@ def _get_stock_realtime_quotes(stock_codes: list):
 
 def _calculate_estimate_via_holdings(code: str, last_nav: float):
     """通过持仓计算实时估值"""
+    # 周末不计算，直接返回 None，让外层使用兜底逻辑 (gszzl=0)
+    if not _is_trading_time():
+        return None
+
     holdings = _get_fund_holdings_internal(code)
     if not holdings: return None
     
@@ -207,17 +221,22 @@ def search_funds(key: str = Query(..., min_length=1)):
     except: return []
 
 @app.get("/api/market")
-def get_market_indices():
-    """获取大盘主要指数"""
-    indices = [
-        {"name": "上证指数", "code": "1.000001"},
-        {"name": "深证成指", "code": "0.399001"},
-        {"name": "创业板指", "code": "0.399006"},
-        {"name": "中证白酒", "code": "0.399997"}, 
-        {"name": "半导体", "code": "0.991023"}, 
-        {"name": "新能源车", "code": "0.399976"}
-    ]
-    secids = ",".join([i['code'] for i in indices])
+def get_market_indices(codes: str = Query(None)):
+    """
+    获取市场指数/板块
+    codes: 逗号分隔的 secid，例如 "1.000001,0.399006"
+    """
+    # 默认值
+    default_codes = ["1.000001", "0.399001", "0.399006", "0.399997", "0.399976"]
+    
+    if codes:
+        target_codes = codes.split(',')
+    else:
+        target_codes = default_codes
+
+    if not target_codes: return []
+
+    secids = ",".join(target_codes)
     url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f3,f12,f14,f2&secids={secids}"
     
     headers = {
@@ -240,8 +259,18 @@ def get_market_indices():
                 score = 50 + change * 10 
                 score = max(0, min(100, score))
                 
+                # 添加原始代码 (secid 格式的一部分) 以便前端识别
+                # 这里我们假设前端知道对应的 secid 前缀，或者我们直接返回带前缀的 secid 比较麻烦
+                # 简单处理：返回 f12 (代码)
+                
+                # 重新构建 secid 用于标识
+                market = "1" if str(item['f12']).startswith("000001") and item['f14']=="上证指数" else "0"
+                # 实际上这个逻辑不严谨，但对于展示够了
+                
+                # 为了保持简单，我们不在 response 里强行构造 secid，只返回 code (f12)
                 result.append({
                     "name": item['f14'],
+                    "code": item['f12'], 
                     "changePercent": change,
                     "score": int(score),
                     "leadingStock": "--", 
@@ -251,7 +280,7 @@ def get_market_indices():
         logger.error(f"Market index fetch error: {e}")
         pass
     
-    return result if result else []
+    return result
 
 @app.get("/api/estimate/{code}")
 def get_estimate(code: str):
@@ -290,7 +319,15 @@ def get_estimate(code: str):
     # 决策 A: 真实净值已经是今天的 -> 完美
     if latest_jzrq == today_str and current_dwjz > 0:
         data['gsz'] = str(current_dwjz)
+        # 如果是真实净值，估值涨跌应该是0（因为已经结账了），或者保持当日的变动幅度
+        # 但通常估值接口在晚上会更新为真实净值，此时估值=真实值
         return data
+    
+    # 决策 Weekend: 如果是周末，强制不进行估算，使用 dwjz 作为 gsz
+    if not _is_trading_time():
+         data['gsz'] = str(current_dwjz)
+         data['gszzl'] = "0.00"
+         return data
 
     has_valid_official_est = (str(data.get("gsz")) != "0" and data.get("gszzl") != "0")
     

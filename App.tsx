@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Fund, TabView, Transaction, TransactionType, Group, SectorIndex } from './types';
-import { getInitialFunds, updateFundEstimates, fetchMarketIndices, saveFundsToLocal, saveGroupsToLocal, getStoredGroups, exportData, importData } from './services/fundService';
+import { getInitialFunds, updateFundEstimates, fetchMarketIndices, saveFundsToLocal, saveGroupsToLocal, getStoredGroups, exportData, importData, getStoredMarketCodes, saveMarketCodes } from './services/fundService';
 import { analyzeFund } from './services/geminiService';
 import { Dashboard } from './components/Dashboard';
 import { MarketSentiment } from './components/MarketSentiment';
@@ -11,7 +11,9 @@ import { FundDetail } from './components/FundDetail';
 import { FundFormModal } from './components/FundFormModal';
 import { TransactionModal } from './components/TransactionModal';
 import { AIChat } from './components/AIChat';
-import { LayoutGrid, PieChart, Settings, Bot, Plus, LineChart, Loader2, Users, X, Check, Moon, Sun, Monitor, Download, Upload, Copy, PenTool } from 'lucide-react';
+import { Watchlist } from './components/Watchlist';
+import { MarketConfigModal } from './components/MarketConfigModal';
+import { LayoutGrid, PieChart, Settings, Bot, Plus, LineChart, Loader2, Users, X, Check, Moon, Sun, Monitor, Download, Upload, Copy, PenTool, Eye } from 'lucide-react';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabView>(TabView.DASHBOARD);
@@ -24,6 +26,7 @@ const App: React.FC = () => {
   const [groups, setGroups] = useState<Group[]>([]);
   const [currentGroupId, setCurrentGroupId] = useState<string>('all'); 
   const [sectorIndices, setSectorIndices] = useState<SectorIndex[]>([]);
+  const [marketCodes, setMarketCodes] = useState<string[]>([]);
   
   // Computed State
   const [totalProfit, setTotalProfit] = useState(0);
@@ -35,8 +38,10 @@ const App: React.FC = () => {
   
   // Modals
   const [isAddModalOpen, setAddModalOpen] = useState(false);
+  const [isWatchlistMode, setIsWatchlistMode] = useState(false); // New: Watchlist addition mode
   const [editingFund, setEditingFund] = useState<Fund | null>(null); 
   const [isManageGroupsOpen, setIsManageGroupsOpen] = useState(false);
+  const [isMarketConfigOpen, setIsMarketConfigOpen] = useState(false); // New: Market Config
   const [newGroupName, setNewGroupName] = useState('');
   
   // Backup UI State
@@ -76,9 +81,13 @@ const App: React.FC = () => {
   }, [theme]);
 
   // Filter funds based on current group selection
-  const visibleFunds = currentGroupId === 'all' 
-      ? funds 
-      : funds.filter(f => f.groupId === currentGroupId);
+  // **Correction**: Separate Watchlist items from Dashboard items
+  const holdingFunds = funds.filter(f => !f.isWatchlist && f.holdingShares > 0);
+  const watchlistFunds = funds.filter(f => f.isWatchlist || f.holdingShares === 0);
+
+  const visibleDashboardFunds = currentGroupId === 'all' 
+      ? holdingFunds 
+      : holdingFunds.filter(f => f.groupId === currentGroupId);
 
   const calculateTotals = useCallback((currentFunds: Fund[]) => {
     let profit = 0;
@@ -92,23 +101,15 @@ const App: React.FC = () => {
   }, []);
 
   // Handle Refresh (Manual)
-  const handleRefresh = useCallback(async (currentFunds = funds) => {
-    if (currentFunds.length === 0) return;
-    
+  const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
     try {
         const [updatedFunds, updatedIndices] = await Promise.all([
-            updateFundEstimates(currentFunds),
-            fetchMarketIndices()
+            updateFundEstimates(funds),
+            fetchMarketIndices(marketCodes)
         ]);
         
-        setFunds(prev => {
-             // 替换逻辑，保留未参与更新的基金（如果 currentFunds 只是部分）
-             // 这里的 currentFunds 如果是 full list 则直接替换
-             // 简单处理：更新 ID 匹配的
-             const newMap = new Map(updatedFunds.map(f => [f.id, f]));
-             return prev.map(f => newMap.get(f.id) || f);
-        });
+        setFunds(updatedFunds);
         setSectorIndices(updatedIndices);
         setLastUpdate(new Date());
     } catch (e) {
@@ -116,36 +117,38 @@ const App: React.FC = () => {
     } finally {
         setIsRefreshing(false);
     }
-  }, [funds]);
+  }, [funds, marketCodes]);
 
   // Initialize Data
   useEffect(() => {
     const initialFunds = getInitialFunds();
     const initialGroups = getStoredGroups();
+    const storedMarketCodes = getStoredMarketCodes();
+    
     setFunds(initialFunds);
     setGroups(initialGroups);
+    setMarketCodes(storedMarketCodes);
     
     // Initial fetch on load
     if (initialFunds.length > 0) {
-        handleRefresh(initialFunds);
-    } else {
-        fetchMarketIndices().then(setSectorIndices);
+        updateFundEstimates(initialFunds).then(setFunds);
     }
+    fetchMarketIndices(storedMarketCodes).then(setSectorIndices);
+    
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); 
 
   // Persistence
   useEffect(() => {
-    if (funds.length > 0 || groups.length > 0) {
-        saveFundsToLocal(funds);
-        saveGroupsToLocal(groups);
-    }
+    // Save on changes
+    saveFundsToLocal(funds);
+    saveGroupsToLocal(groups);
   }, [funds, groups]);
 
   // Watch for changes to update totals
   useEffect(() => {
-      calculateTotals(visibleFunds);
-  }, [visibleFunds, calculateTotals]);
+      calculateTotals(visibleDashboardFunds);
+  }, [visibleDashboardFunds, calculateTotals]);
 
 
   // AI Analysis
@@ -172,7 +175,7 @@ const App: React.FC = () => {
       }
       return nextFunds;
     });
-    setTimeout(() => handleRefresh([newFund]), 100); 
+    setTimeout(() => handleRefresh(), 100); 
   };
 
   const handleDeleteFund = (fundToDelete: Fund) => {
@@ -198,6 +201,14 @@ const App: React.FC = () => {
       setGroups(prev => prev.filter(g => g.id !== groupId));
       if (currentGroupId === groupId) setCurrentGroupId('all');
       setFunds(prev => prev.filter(f => f.groupId !== groupId));
+  };
+
+  // --- Market Config ---
+  const handleSaveMarketConfig = (codes: string[]) => {
+      setMarketCodes(codes);
+      saveMarketCodes(codes);
+      // Immediate Refresh
+      fetchMarketIndices(codes).then(setSectorIndices);
   };
 
   // --- Backup Handlers ---
@@ -245,11 +256,15 @@ const App: React.FC = () => {
                       f.realizedProfit = (f.realizedProfit || 0) + profit;
                   }
                   
+                  // 如果买入后不再是 Watchlist
+                  const isWatchlist = newShares === 0;
+
                   return {
                       ...f,
                       holdingShares: newShares,
                       holdingCost: newCost,
-                      transactions: newTransactions
+                      transactions: newTransactions,
+                      isWatchlist: isWatchlist
                   };
               }
               return f;
@@ -260,11 +275,19 @@ const App: React.FC = () => {
 
   const openAddModal = () => {
       setEditingFund(null);
+      setIsWatchlistMode(false);
       setAddModalOpen(true);
   };
+  
+  const openWatchlistAddModal = () => {
+      setEditingFund(null);
+      setIsWatchlistMode(true);
+      setAddModalOpen(true);
+  }
 
   const openEditModal = (fund: Fund) => {
       setEditingFund(fund);
+      setIsWatchlistMode(false);
       setAddModalOpen(true);
   };
 
@@ -301,18 +324,28 @@ const App: React.FC = () => {
       <main className="pt-2">
         {activeTab === TabView.DASHBOARD && (
             <Dashboard 
-                funds={visibleFunds}
+                funds={visibleDashboardFunds}
                 groups={groups}
                 currentGroupId={currentGroupId}
                 totalProfit={totalProfit}
                 totalMarketValue={totalMarketValue}
                 lastUpdate={lastUpdate}
                 isRefreshing={isRefreshing}
-                onRefresh={() => handleRefresh(visibleFunds)}
+                onRefresh={handleRefresh}
                 onAnalyze={handleAnalyze}
                 onFundClick={(fund) => setSelectedFund(fund)}
                 onGroupChange={setCurrentGroupId}
                 onManageGroups={() => setIsManageGroupsOpen(true)}
+            />
+        )}
+        
+        {activeTab === TabView.WATCHLIST && (
+            <Watchlist 
+                funds={watchlistFunds}
+                onAdd={openWatchlistAddModal}
+                onRemove={handleDeleteFund}
+                onRefresh={handleRefresh}
+                isRefreshing={isRefreshing}
             />
         )}
 
@@ -321,10 +354,18 @@ const App: React.FC = () => {
                 <MarketSentiment data={sentimentData} score={Math.round(sentimentScore)} />
                 
                 <div className="px-4">
-                     <h3 className="font-bold text-slate-800 dark:text-slate-100 mb-3 flex items-center justify-between">
-                         <span>市场核心指数</span>
-                         <span className="text-xs font-normal text-slate-400">实时数据</span>
-                     </h3>
+                     <div className="flex justify-between items-center mb-3">
+                         <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                             <span>市场核心指数</span>
+                             <span className="text-xs font-normal text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">实时数据</span>
+                         </h3>
+                         <button 
+                            onClick={() => setIsMarketConfigOpen(true)}
+                            className="text-xs text-blue-500 font-bold flex items-center gap-1"
+                         >
+                            <Settings size={12} /> 自定义
+                         </button>
+                     </div>
                      <div className="grid grid-cols-2 gap-3">
                          {sectorIndices.map((sector) => (
                              <div key={sector.name} className="bg-white dark:bg-slate-900 p-3 rounded-lg shadow-sm border border-slate-100 dark:border-slate-800 flex justify-between items-center">
@@ -419,7 +460,7 @@ const App: React.FC = () => {
                         </button>
                     </div>
                 </div>
-                <p className="text-xs text-slate-400 mt-4 text-center">SmartFund Pro v2.0</p>
+                <p className="text-xs text-slate-400 mt-4 text-center">SmartFund Pro v2.1</p>
             </div>
         )}
       </main>
@@ -472,6 +513,7 @@ const App: React.FC = () => {
       {/* Bottom Navigation */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md dark:bg-slate-900/90 border-t border-slate-200 dark:border-slate-800 pb-safe pt-2 px-2 flex justify-between items-end h-[80px] z-40 max-w-md mx-auto transition-colors">
         <NavBtn icon={<LayoutGrid size={22}/>} label="资产" isActive={activeTab === TabView.DASHBOARD} onClick={() => setActiveTab(TabView.DASHBOARD)} />
+        <NavBtn icon={<Eye size={22}/>} label="自选" isActive={activeTab === TabView.WATCHLIST} onClick={() => setActiveTab(TabView.WATCHLIST)} />
         <NavBtn icon={<PieChart size={22}/>} label="市场" isActive={activeTab === TabView.MARKET} onClick={() => setActiveTab(TabView.MARKET)} />
         <NavBtn icon={<PenTool size={22}/>} label="工具" isActive={activeTab === TabView.TOOLS} onClick={() => setActiveTab(TabView.TOOLS)} />
         
@@ -505,6 +547,14 @@ const App: React.FC = () => {
         initialFund={editingFund}
         groups={groups}
         currentGroupId={currentGroupId}
+        isWatchlistMode={isWatchlistMode}
+      />
+      
+      <MarketConfigModal 
+        isOpen={isMarketConfigOpen}
+        onClose={() => setIsMarketConfigOpen(false)}
+        currentCodes={marketCodes}
+        onSave={handleSaveMarketConfig}
       />
 
       {transactionModal.isOpen && transactionModal.fund && (
