@@ -1,16 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Fund, TabView, Transaction, TransactionType, Group, SectorIndex } from './types';
-import { getInitialFunds, updateFundEstimates, getSectorIndices, saveFundsToLocal, saveGroupsToLocal, getStoredGroups, exportData, importData } from './services/fundService';
+import { getInitialFunds, updateFundEstimates, fetchMarketIndices, saveFundsToLocal, saveGroupsToLocal, getStoredGroups, exportData, importData } from './services/fundService';
 import { analyzeFund } from './services/geminiService';
 import { Dashboard } from './components/Dashboard';
 import { MarketSentiment } from './components/MarketSentiment';
 import { BacktestDashboard } from './components/BacktestDashboard';
+import { ToolsDashboard } from './components/ToolsDashboard';
 import { AIModal } from './components/AIModal';
 import { FundDetail } from './components/FundDetail';
 import { FundFormModal } from './components/FundFormModal';
 import { TransactionModal } from './components/TransactionModal';
 import { AIChat } from './components/AIChat';
-import { LayoutGrid, PieChart, Settings, Bot, Plus, LineChart, Loader2, Users, X, Check, Moon, Sun, Monitor, Download, Upload, Copy } from 'lucide-react';
+import { LayoutGrid, PieChart, Settings, Bot, Plus, LineChart, Loader2, Users, X, Check, Moon, Sun, Monitor, Download, Upload, Copy, PenTool } from 'lucide-react';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabView>(TabView.DASHBOARD);
@@ -96,11 +97,19 @@ const App: React.FC = () => {
     
     setIsRefreshing(true);
     try {
-        const updated = await updateFundEstimates(currentFunds);
+        const [updatedFunds, updatedIndices] = await Promise.all([
+            updateFundEstimates(currentFunds),
+            fetchMarketIndices()
+        ]);
+        
         setFunds(prev => {
-             // 这里简单替换，实际生产中可能需要合并状态防止覆盖正在编辑的字段
-             return updated;
+             // 替换逻辑，保留未参与更新的基金（如果 currentFunds 只是部分）
+             // 这里的 currentFunds 如果是 full list 则直接替换
+             // 简单处理：更新 ID 匹配的
+             const newMap = new Map(updatedFunds.map(f => [f.id, f]));
+             return prev.map(f => newMap.get(f.id) || f);
         });
+        setSectorIndices(updatedIndices);
         setLastUpdate(new Date());
     } catch (e) {
         console.error("Refresh failed", e);
@@ -115,16 +124,17 @@ const App: React.FC = () => {
     const initialGroups = getStoredGroups();
     setFunds(initialFunds);
     setGroups(initialGroups);
-    setSectorIndices(getSectorIndices());
     
     // Initial fetch on load
     if (initialFunds.length > 0) {
         handleRefresh(initialFunds);
+    } else {
+        fetchMarketIndices().then(setSectorIndices);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Run once on mount
+  }, []); 
 
-  // Persistence: Save data whenever funds or groups change
+  // Persistence
   useEffect(() => {
     if (funds.length > 0 || groups.length > 0) {
         saveFundsToLocal(funds);
@@ -132,13 +142,11 @@ const App: React.FC = () => {
     }
   }, [funds, groups]);
 
-  // Watch for changes to update totals based on visible funds
+  // Watch for changes to update totals
   useEffect(() => {
       calculateTotals(visibleFunds);
   }, [visibleFunds, calculateTotals]);
 
-  // Removed setInterval polling to prevent IP Ban. 
-  // User must manually click refresh in Dashboard.
 
   // AI Analysis
   const handleAnalyze = async (fund: Fund) => {
@@ -152,7 +160,6 @@ const App: React.FC = () => {
   };
 
   // --- Fund CRUD ---
-
   const handleSaveFund = async (newFund: Fund) => {
     setFunds(prev => {
       const exists = prev.findIndex(f => f.id === newFund.id);
@@ -165,9 +172,6 @@ const App: React.FC = () => {
       }
       return nextFunds;
     });
-    
-    // Immediately fetch latest data for the new fund
-    // Note: We create a temp array because 'setFunds' is async
     setTimeout(() => handleRefresh([newFund]), 100); 
   };
 
@@ -215,7 +219,6 @@ const App: React.FC = () => {
   };
 
   // --- Transactions ---
-
   const openTransactionModal = (fund: Fund, type: TransactionType) => {
       setTransactionModal({ isOpen: true, fund, type });
   };
@@ -265,8 +268,11 @@ const App: React.FC = () => {
       setAddModalOpen(true);
   };
 
-  // Dummy Sentiment
-  const sentimentScore = 65; 
+  // Determine sentiment based on market average (Simple logic)
+  const marketAvgChange = sectorIndices.length > 0 
+     ? sectorIndices.reduce((acc, s) => acc + s.changePercent, 0) / sectorIndices.length 
+     : 0;
+  const sentimentScore = Math.min(100, Math.max(0, 50 + marketAvgChange * 20));
   const sentimentData = [
     { name: '恐慌', value: 30, color: '#22c55e' }, 
     { name: '中性', value: 40, color: '#fbbf24' }, 
@@ -278,16 +284,16 @@ const App: React.FC = () => {
       {/* Header */}
       <header className="bg-white dark:bg-slate-900 px-6 pt-12 pb-4 sticky top-0 z-10 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center transition-colors">
         <div>
-           <h1 className="text-2xl font-black text-slate-800 dark:text-white tracking-tight">
-             Smart<span className="text-primary">Fund</span>
+           <h1 className="text-2xl font-black text-slate-800 dark:text-white tracking-tight flex items-center gap-1">
+             Smart<span className="text-blue-600">Fund</span>
            </h1>
-           <p className="text-xs text-slate-400 font-medium tracking-wide">多账户智能养基</p>
+           <p className="text-xs text-slate-400 font-medium tracking-wide">AI 驱动的智能养基助手</p>
         </div>
         <button 
             onClick={openAddModal}
-            className="bg-slate-100 dark:bg-slate-800 p-2 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 transition text-slate-600 dark:text-slate-300"
+            className="bg-blue-600 text-white p-2.5 rounded-full hover:bg-blue-700 shadow-lg shadow-blue-200 dark:shadow-blue-900/30 transition active:scale-95"
         >
-           <Plus size={24} />
+           <Plus size={20} />
         </button>
       </header>
 
@@ -311,17 +317,20 @@ const App: React.FC = () => {
         )}
 
         {activeTab === TabView.MARKET && (
-            <div className="space-y-6 mt-6">
-                <MarketSentiment data={sentimentData} score={sentimentScore} />
+            <div className="space-y-6 mt-6 pb-24">
+                <MarketSentiment data={sentimentData} score={Math.round(sentimentScore)} />
                 
                 <div className="px-4">
-                     <h3 className="font-bold text-slate-800 dark:text-slate-100 mb-3">今日板块追踪</h3>
+                     <h3 className="font-bold text-slate-800 dark:text-slate-100 mb-3 flex items-center justify-between">
+                         <span>市场核心指数</span>
+                         <span className="text-xs font-normal text-slate-400">实时数据</span>
+                     </h3>
                      <div className="grid grid-cols-2 gap-3">
                          {sectorIndices.map((sector) => (
                              <div key={sector.name} className="bg-white dark:bg-slate-900 p-3 rounded-lg shadow-sm border border-slate-100 dark:border-slate-800 flex justify-between items-center">
                                  <div>
                                      <div className="text-sm font-bold text-slate-700 dark:text-slate-200">{sector.name}</div>
-                                     <div className="text-[10px] text-slate-400 mt-1">领涨: {sector.leadingStock}</div>
+                                     <div className="text-[10px] text-slate-400 mt-1">热度: {sector.score}</div>
                                  </div>
                                  <div className={`text-base font-bold ${sector.changePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
                                      {sector.changePercent > 0 ? '+' : ''}{sector.changePercent}%
@@ -331,6 +340,10 @@ const App: React.FC = () => {
                      </div>
                 </div>
             </div>
+        )}
+
+        {activeTab === TabView.TOOLS && (
+           <ToolsDashboard funds={funds} />
         )}
 
         {activeTab === TabView.BACKTEST && (
@@ -406,7 +419,7 @@ const App: React.FC = () => {
                         </button>
                     </div>
                 </div>
-                <p className="text-xs text-slate-400 mt-4 text-center">Version 4.1.0 (Manual Refresh Mode)</p>
+                <p className="text-xs text-slate-400 mt-4 text-center">SmartFund Pro v2.0</p>
             </div>
         )}
       </main>
@@ -457,48 +470,23 @@ const App: React.FC = () => {
       )}
 
       {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 pb-safe pt-2 px-6 flex justify-between items-end h-[80px] z-40 max-w-md mx-auto transition-colors">
-        <button 
-            onClick={() => setActiveTab(TabView.DASHBOARD)}
-            className={`flex flex-col items-center w-14 pb-4 transition ${activeTab === TabView.DASHBOARD ? 'text-primary' : 'text-slate-400 dark:text-slate-600'}`}
-        >
-            <LayoutGrid size={24} strokeWidth={activeTab === TabView.DASHBOARD ? 2.5 : 2} />
-            <span className="text-[10px] font-medium mt-1">资产</span>
-        </button>
+      <nav className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md dark:bg-slate-900/90 border-t border-slate-200 dark:border-slate-800 pb-safe pt-2 px-2 flex justify-between items-end h-[80px] z-40 max-w-md mx-auto transition-colors">
+        <NavBtn icon={<LayoutGrid size={22}/>} label="资产" isActive={activeTab === TabView.DASHBOARD} onClick={() => setActiveTab(TabView.DASHBOARD)} />
+        <NavBtn icon={<PieChart size={22}/>} label="市场" isActive={activeTab === TabView.MARKET} onClick={() => setActiveTab(TabView.MARKET)} />
+        <NavBtn icon={<PenTool size={22}/>} label="工具" isActive={activeTab === TabView.TOOLS} onClick={() => setActiveTab(TabView.TOOLS)} />
         
-        <button 
-            onClick={() => setActiveTab(TabView.MARKET)}
-            className={`flex flex-col items-center w-14 pb-4 transition ${activeTab === TabView.MARKET ? 'text-primary' : 'text-slate-400 dark:text-slate-600'}`}
-        >
-            <PieChart size={24} strokeWidth={activeTab === TabView.MARKET ? 2.5 : 2} />
-            <span className="text-[10px] font-medium mt-1">市场</span>
-        </button>
-
-        <button 
-            onClick={() => setActiveTab(TabView.BACKTEST)}
-            className={`flex flex-col items-center w-14 pb-4 transition ${activeTab === TabView.BACKTEST ? 'text-primary' : 'text-slate-400 dark:text-slate-600'}`}
-        >
-            <LineChart size={24} strokeWidth={activeTab === TabView.BACKTEST ? 2.5 : 2} />
-            <span className="text-[10px] font-medium mt-1">回测</span>
-        </button>
-
+        {/* AI Button Highlighted */}
         <button 
             onClick={() => setActiveTab(TabView.AI_INSIGHTS)}
-            className={`flex flex-col items-center w-14 pb-4 transition ${activeTab === TabView.AI_INSIGHTS ? 'text-indigo-600' : 'text-slate-400 dark:text-slate-600'}`}
+            className={`flex flex-col items-center w-14 pb-4 transition group`}
         >
-             <div className={`p-1 rounded-lg ${activeTab === TabView.AI_INSIGHTS ? 'bg-indigo-50 dark:bg-indigo-900/30' : ''}`}>
-                 <Bot size={24} strokeWidth={activeTab === TabView.AI_INSIGHTS ? 2.5 : 2} />
+             <div className={`p-2 rounded-xl mb-1 transition-all duration-300 ${activeTab === TabView.AI_INSIGHTS ? 'bg-gradient-to-tr from-indigo-500 to-purple-500 text-white shadow-lg -translate-y-2' : 'text-slate-400 dark:text-slate-500'}`}>
+                 <Bot size={24} />
              </div>
-            <span className="text-[10px] font-medium mt-1">AI</span>
+            <span className={`text-[10px] font-medium ${activeTab === TabView.AI_INSIGHTS ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-400'}`}>AI</span>
         </button>
 
-        <button 
-             onClick={() => setActiveTab(TabView.SETTINGS)}
-             className={`flex flex-col items-center w-14 pb-4 transition ${activeTab === TabView.SETTINGS ? 'text-primary' : 'text-slate-400 dark:text-slate-600'}`}
-        >
-            <Settings size={24} strokeWidth={activeTab === TabView.SETTINGS ? 2.5 : 2} />
-            <span className="text-[10px] font-medium mt-1">设置</span>
-        </button>
+        <NavBtn icon={<Settings size={22}/>} label="设置" isActive={activeTab === TabView.SETTINGS} onClick={() => setActiveTab(TabView.SETTINGS)} />
       </nav>
 
       {/* Modals */}
@@ -593,5 +581,15 @@ const App: React.FC = () => {
     </div>
   );
 };
+
+const NavBtn = ({ icon, label, isActive, onClick }: any) => (
+    <button 
+        onClick={onClick}
+        className={`flex flex-col items-center w-14 pb-4 transition ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-600'}`}
+    >
+        {React.cloneElement(icon, { strokeWidth: isActive ? 2.5 : 2 })}
+        <span className="text-[10px] font-medium mt-1">{label}</span>
+    </button>
+);
 
 export default App;

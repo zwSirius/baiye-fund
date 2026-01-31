@@ -38,6 +38,7 @@ export interface Fund {
   estimatedNav: number;
   estimatedChangePercent: number;
   estimatedProfit: number; // 今日预估盈亏
+  source?: string; // "official" | "holdings_calc"
   
   // User specific
   groupId: string; // 所属分组ID
@@ -52,6 +53,7 @@ export interface SectorIndex {
   changePercent: number;
   score: number; // 0-100 hot score
   leadingStock: string; // 领涨股
+  value?: number; // 当前点位
 }
 
 export interface MarketSentiment {
@@ -63,6 +65,7 @@ export interface MarketSentiment {
 export enum TabView {
   DASHBOARD = 'DASHBOARD',
   MARKET = 'MARKET',
+  TOOLS = 'TOOLS',
   BACKTEST = 'BACKTEST',
   AI_INSIGHTS = 'AI_INSIGHTS',
   SETTINGS = 'SETTINGS'

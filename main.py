@@ -7,7 +7,7 @@ import requests
 import re
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -48,7 +48,7 @@ class DataCache:
         return self.funds_list
 
     def get_holdings(self, code):
-        # 持仓缓存 24 小时 (因为季度报告很久才更新一次)
+        # 持仓缓存 24 小时
         cache_entry = self.holdings.get(code)
         if cache_entry and (datetime.now() - cache_entry['time']).total_seconds() < 86400:
             return cache_entry['data']
@@ -64,25 +64,24 @@ data_cache = DataCache()
 
 # --- 内部逻辑 ---
 
-def _get_current_china_date():
+def _get_current_china_time():
+    """获取当前中国时间"""
+    return datetime.utcnow() + timedelta(hours=8)
+
+def _get_current_china_date_str():
     """获取当前中国日期的字符串 (YYYY-MM-DD)"""
-    # UTC+8
-    china_time = datetime.utcnow() + timedelta(hours=8)
-    return china_time.strftime("%Y-%m-%d")
+    return _get_current_china_time().strftime("%Y-%m-%d")
 
 def _get_fund_holdings_internal(code: str):
-    """
-    获取持仓 (带缓存)
-    """
-    # 1. 查缓存
+    """获取持仓 (带缓存)"""
     cached = data_cache.get_holdings(code)
     if cached is not None:
         return cached
 
-    # 2. 没缓存，去获取
     try:
         current_year = datetime.now().year
-        years_to_try = [current_year, current_year - 1]
+        # 尝试最近3年的报告，防止新基金或停更基金
+        years_to_try = [current_year, current_year - 1, current_year - 2]
         portfolio_df = pd.DataFrame()
         
         for year in years_to_try:
@@ -96,11 +95,11 @@ def _get_fund_holdings_internal(code: str):
 
         holdings = []
         if not portfolio_df.empty and '季度' in portfolio_df.columns:
+            # 找到最新的季度
             quarters = portfolio_df['季度'].unique()
             if len(quarters) > 0:
-                quarters.sort()
-                latest_quarter = quarters[-1]
-                latest_df = portfolio_df[portfolio_df['季度'] == latest_quarter]
+                latest_df = portfolio_df[portfolio_df['季度'] == quarters[0]] # 假设第一个是最新的
+                
                 latest_df['占净值比例'] = pd.to_numeric(latest_df['占净值比例'], errors='coerce').fillna(0)
                 latest_df = latest_df.sort_values(by='占净值比例', ascending=False).head(10)
                 
@@ -111,7 +110,6 @@ def _get_fund_holdings_internal(code: str):
                         "percent": float(row['占净值比例'])
                     })
         
-        # 3. 存缓存 (即使为空也存，防止反复请求失败接口)
         data_cache.set_holdings(code, holdings)
         return holdings
 
@@ -120,42 +118,65 @@ def _get_fund_holdings_internal(code: str):
         return []
 
 def _get_stock_realtime_quotes(stock_codes: list):
+    """批量获取股票实时行情"""
     if not stock_codes: return {}
     secids = []
     for code in stock_codes:
-        if code.startswith('6') or code.startswith('9') or code.startswith('5'): secids.append(f"1.{code}")
-        else: secids.append(f"0.{code}")
+        if code.startswith('6'): 
+            secids.append(f"1.{code}")
+        elif code.startswith('8') or code.startswith('4'): # 北交所
+             secids.append(f"0.{code}")
+        else:
+            secids.append(f"0.{code}")
     
+    # 东方财富实时行情接口
     url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f3,f12&secids={','.join(secids)}"
     quotes = {}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Referer": "http://quote.eastmoney.com/"
+    }
     try:
-        resp = requests.get(url, timeout=2)
+        resp = requests.get(url, headers=headers, timeout=5)
         data = resp.json()
         if data and 'data' in data and 'diff' in data['data']:
             for item in data['data']['diff']:
                 stock_code = item.get('f12')
                 change_pct = item.get('f3')
-                if change_pct == '-': change_pct = 0
-                if stock_code: quotes[stock_code] = float(change_pct)
-    except: pass
+                # 处理停牌或无数据的情况 "-"
+                try:
+                    val = float(change_pct)
+                except (ValueError, TypeError):
+                    val = 0.0
+                
+                if stock_code: quotes[stock_code] = val
+    except Exception as e:
+        logger.error(f"Quote fetch error: {e}")
+        pass
     return quotes
 
 def _calculate_estimate_via_holdings(code: str, last_nav: float):
+    """通过持仓计算实时估值"""
     holdings = _get_fund_holdings_internal(code)
     if not holdings: return None
+    
     stock_codes = [h['code'] for h in holdings]
     quotes = _get_stock_realtime_quotes(stock_codes)
     if not quotes: return None
 
     total_weighted_change = 0
+    total_weight = 0
     
     for h in holdings:
         stock_code = h['code']
         weight = h['percent'] 
         change = quotes.get(stock_code, 0)
-        total_weighted_change += (change * weight)
         
-    estimated_change_percent = total_weighted_change / 100.0
+        total_weighted_change += (change * weight)
+        total_weight += weight
+        
+    # 简易修正系数 1.1 (经验值)
+    estimated_change_percent = (total_weighted_change / 100.0) * 1.1
     estimated_nav = last_nav * (1 + estimated_change_percent / 100.0)
     
     return {
@@ -167,7 +188,7 @@ def _calculate_estimate_via_holdings(code: str, last_nav: float):
 
 @app.get("/")
 def home():
-    return {"status": "ok"}
+    return {"status": "SmartFund API Running"}
 
 @app.get("/api/search")
 def search_funds(key: str = Query(..., min_length=1)):
@@ -175,7 +196,9 @@ def search_funds(key: str = Query(..., min_length=1)):
         df = data_cache.get_funds()
         if df.empty: return []
         key = key.upper()
-        mask = (df['基金代码'].str.contains(key, na=False) | df['基金简称'].str.contains(key, na=False) | df['拼音缩写'].str.contains(key, na=False))
+        mask = (df['基金代码'].str.contains(key, na=False) | 
+                df['基金简称'].str.contains(key, na=False) | 
+                df['拼音缩写'].str.contains(key, na=False))
         result = df[mask].head(20)
         response_list = []
         for _, row in result.iterrows():
@@ -183,14 +206,60 @@ def search_funds(key: str = Query(..., min_length=1)):
         return response_list
     except: return []
 
+@app.get("/api/market")
+def get_market_indices():
+    """获取大盘主要指数"""
+    indices = [
+        {"name": "上证指数", "code": "1.000001"},
+        {"name": "深证成指", "code": "0.399001"},
+        {"name": "创业板指", "code": "0.399006"},
+        {"name": "中证白酒", "code": "0.399997"}, 
+        {"name": "半导体", "code": "0.991023"}, 
+        {"name": "新能源车", "code": "0.399976"}
+    ]
+    secids = ",".join([i['code'] for i in indices])
+    url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f3,f12,f14,f2&secids={secids}"
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Referer": "http://quote.eastmoney.com/"
+    }
+
+    result = []
+    try:
+        resp = requests.get(url, headers=headers, timeout=5)
+        data = resp.json()
+        if data and 'data' in data and 'diff' in data['data']:
+            for item in data['data']['diff']:
+                try:
+                    change = float(item['f3'])
+                except (ValueError, TypeError):
+                    change = 0.0
+                
+                # 简单的极值归一化作为热度 score
+                score = 50 + change * 10 
+                score = max(0, min(100, score))
+                
+                result.append({
+                    "name": item['f14'],
+                    "changePercent": change,
+                    "score": int(score),
+                    "leadingStock": "--", 
+                    "value": item['f2']
+                })
+    except Exception as e:
+        logger.error(f"Market index fetch error: {e}")
+        pass
+    
+    return result if result else []
+
 @app.get("/api/estimate/{code}")
 def get_estimate(code: str):
-    # 默认结构
     data = {"fundcode": code, "gsz": "0", "gszzl": "0", "dwjz": "0", "name": "", "jzrq": ""}
     
-    # 1. 获取官方接口数据
     try:
-        url = f"http://fundgz.1234567.com.cn/js/gszzl_{code}.js"
+        timestamp = int(datetime.now().timestamp() * 1000)
+        url = f"http://fundgz.1234567.com.cn/js/gszzl_{code}.js?rt={timestamp}"
         headers = {"User-Agent": "Mozilla/5.0", "Referer": "http://fund.eastmoney.com/"}
         response = requests.get(url, headers=headers, timeout=2)
         match = re.search(r'jsonpgz\((.*?)\);', response.text)
@@ -199,47 +268,46 @@ def get_estimate(code: str):
             if fetched: data.update(fetched)
     except: pass
 
-    # 2. 检查 dwjz 是否为空，如果为空查历史兜底
     current_dwjz = 0.0
+    latest_jzrq = ""
     if str(data.get("dwjz")) != "0":
         current_dwjz = float(data.get("dwjz"))
+        latest_jzrq = data.get("jzrq")
     else:
         try:
             history_df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
             if not history_df.empty:
                 latest = history_df.iloc[-1]
                 current_dwjz = float(latest['单位净值'])
+                latest_jzrq = str(latest['净值日期'])
                 data['dwjz'] = str(current_dwjz)
-                data['jzrq'] = str(latest['净值日期'])
+                data['jzrq'] = latest_jzrq
         except: pass
 
-    # --- 核心判断逻辑 ---
+    now = _get_current_china_time()
+    today_str = now.strftime("%Y-%m-%d")
     
-    today_str = _get_current_china_date()
-    nav_date = data.get("jzrq") # 净值日期
-    
-    # 情况 A: 真实净值(dwjz) 已经是今天的了 -> 晚上更新了
-    if nav_date == today_str and current_dwjz > 0:
-        # 强制使用真实净值作为估值
-        data['gsz'] = data['dwjz']
-        data['gszzl'] = data.get("gszzl", "0.00") # 如果官方给了日涨幅就用，没给就没办法(通常会有)
-        # 如果官方此时 gszzl 也是 0 (有时候会这样)，可以尝试根据昨日算，但太复杂，暂且信任官方
+    # 决策 A: 真实净值已经是今天的 -> 完美
+    if latest_jzrq == today_str and current_dwjz > 0:
+        data['gsz'] = str(current_dwjz)
         return data
 
-    # 情况 B: 官方估值无效 (gsz=0)，且真实净值还没更新到今天 -> 盘中或盘前
-    # 或者是周末/节假日 (Level 2 算出来的涨跌幅也会是 0，因为股市不交易，所以逻辑通用)
-    if str(data.get("gsz")) == "0" and current_dwjz > 0:
+    has_valid_official_est = (str(data.get("gsz")) != "0" and data.get("gszzl") != "0")
+    
+    # 决策 B: 官方估值失效或不存在，启动自主计算
+    if not has_valid_official_est and current_dwjz > 0:
         try:
             calc = _calculate_estimate_via_holdings(code, current_dwjz)
             if calc:
                 data['gsz'] = calc['gsz']
                 data['gszzl'] = calc['gszzl']
+                data['source'] = "holdings_calc"
         except Exception as e:
-            logger.error(f"Level 2 failed for {code}: {e}")
+            logger.error(f"Holdings calc failed for {code}: {e}")
 
-    # 情况 C: Level 2 也失败了，或者本来就有官方估值 -> 保持原样 (如果 gsz 还是 0，最后兜底)
-    if str(data.get("gsz")) == "0" and str(data.get("dwjz")) != "0":
-         data['gsz'] = data['dwjz']
+    # 决策 C: 兜底
+    if str(data.get("gsz")) == "0" and current_dwjz > 0:
+         data['gsz'] = str(current_dwjz)
          data['gszzl'] = "0.00"
 
     return data
@@ -255,7 +323,6 @@ def get_fund_detail(code: str):
 
         holdings_list = _get_fund_holdings_internal(code)
         
-        # 详情页实时股价
         if holdings_list:
             quotes = _get_stock_realtime_quotes([h['code'] for h in holdings_list])
             for h in holdings_list:

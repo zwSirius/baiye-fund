@@ -1,7 +1,8 @@
 import { Fund, Stock, BacktestResult, BacktestPoint, SectorIndex } from '../types';
 
 // --- 配置你的后端地址 ---
-const API_BASE = 'https://baiye1997-baiye-fund-api.hf.space';
+// 默认指向本地 Python 后端。如果你部署了后端，请更改此处。
+const API_BASE = 'http://127.0.0.1:7860';
 
 // --- 本地存储键名 ---
 const STORAGE_KEY_FUNDS = 'smartfund_funds_v1';
@@ -63,14 +64,13 @@ export const importData = (jsonString: string): boolean => {
 
 // --- API 接口 ---
 
-// 1. 搜索基金 (Backend Normalized Response)
+// 1. 搜索基金
 export const searchFunds = async (query: string): Promise<Fund[]> => {
   if (!query) return [];
   try {
     const response = await fetch(`${API_BASE}/api/search?key=${encodeURIComponent(query)}`);
     const data = await response.json();
     
-    // 后端现在返回统一的: [{ code: "...", name: "...", type: "..." }]
     if (Array.isArray(data)) {
         return data.map((item: any) => ({
             id: `temp_${item.code}`,
@@ -93,24 +93,24 @@ export const searchFunds = async (query: string): Promise<Fund[]> => {
     }
     return [];
   } catch (error) {
-    console.error("Search failed:", error);
+    console.warn("Search failed (Backend might be offline):", error);
     return [];
   }
 };
 
-// 2. 获取实时估值 (Backend)
+// 2. 获取实时估值
 export const fetchRealTimeEstimate = async (fundCode: string) => {
     try {
         const response = await fetch(`${API_BASE}/api/estimate/${fundCode}`);
         if (!response.ok) return null;
         return await response.json();
     } catch (error) {
-        console.error("Estimate request failed:", error);
+        // console.warn("Estimate request failed:", error);
         return null;
     }
 };
 
-// 3. 获取基金详情 (Backend Normalized Response)
+// 3. 获取基金详情
 export const fetchFundDetails = async (fund: Fund): Promise<Fund> => {
     try {
         const response = await fetch(`${API_BASE}/api/fund/${fund.code}`);
@@ -118,7 +118,6 @@ export const fetchFundDetails = async (fund: Fund): Promise<Fund> => {
         
         const data = await response.json();
         
-        // 后端返回: { manager: string, holdings: [{ code, name, percent }] }
         return {
             ...fund,
             manager: data.manager || fund.manager,
@@ -131,19 +130,18 @@ export const fetchFundDetails = async (fund: Fund): Promise<Fund> => {
             })) : fund.holdings
         };
     } catch (error) {
-        console.warn(`Detail fetch failed for ${fund.code}`, error);
+        console.warn(`Detail fetch failed for ${fund.code}. Backend down?`, error);
         return fund;
     }
 };
 
-// 4. 获取历史净值 (Backend Normalized Response)
+// 4. 获取历史净值
 export const getFundHistoryData = async (fundCode: string) => {
     try {
         const response = await fetch(`${API_BASE}/api/history/${fundCode}`);
         if (!response.ok) return [];
         
         const data = await response.json();
-        // 后端返回: [{ date: '2023-01-01', value: 1.2345 }]
         if (Array.isArray(data)) {
             return data.map((item: any) => ({
                 date: item.date,
@@ -158,7 +156,27 @@ export const getFundHistoryData = async (fundCode: string) => {
     }
 };
 
-// 5. 批量更新 (Backend Estimate)
+// 5. 获取市场指数 (Real)
+export const fetchMarketIndices = async (): Promise<SectorIndex[]> => {
+    try {
+        const response = await fetch(`${API_BASE}/api/market`);
+        if (!response.ok) throw new Error("Market fetch failed");
+        const data = await response.json();
+        return data;
+    } catch (e) {
+        console.warn("Market indices fetch failed (using mock data):", e);
+        // Fallback Mock
+        return [
+            { name: '上证指数', changePercent: 0, score: 50, leadingStock: '--' },
+            { name: '创业板指', changePercent: 0, score: 50, leadingStock: '--' },
+            { name: '中证白酒', changePercent: 0, score: 50, leadingStock: '--' },
+            { name: '新能源车', changePercent: 0, score: 50, leadingStock: '--' },
+            { name: '半导体', changePercent: 0, score: 50, leadingStock: '--' }
+        ];
+    }
+};
+
+// 6. 批量更新
 export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]> => {
     const promises = currentFunds.map(async (fund) => {
         const realData = await fetchRealTimeEstimate(fund.code);
@@ -168,10 +186,9 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
         let name = fund.name;
         let lastNav = fund.lastNav;
         let lastNavDate = fund.lastNavDate;
+        let source = fund.source;
 
         if (realData) {
-            // gsz: 估算值, dwjz: 昨日净值, gszzl: 估算涨跌幅
-            // 只有当 API 返回的数据有效(大于0)时才更新，防止休市时覆盖为 0
             const apiDwjz = parseFloat(realData.dwjz);
             const apiGsz = parseFloat(realData.gsz);
 
@@ -180,17 +197,15 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
                 lastNavDate = realData.jzrq;
             }
 
-            // 如果估算值有效，使用估算值
+            // 如果后端返回了估值（后端已经处理了夜间用真值、日间用估值的逻辑）
             if (apiGsz > 0) {
                 estimatedNav = apiGsz;
                 estimatedChangePercent = parseFloat(realData.gszzl || "0");
+                source = realData.source; // 标记数据来源
             } else if (apiDwjz > 0) {
-                // 如果估算值无效（休市），但净值有效，则预估净值=最新净值，涨跌=0
+                // 兜底
                 estimatedNav = apiDwjz;
                 estimatedChangePercent = 0;
-            } else {
-                // 都无效，保持原状（通常是初始化时的0，或者上一次有效的值）
-                // 不做操作
             }
 
             if (realData.name) name = realData.name;
@@ -205,7 +220,8 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
             lastNavDate,
             estimatedNav,
             estimatedChangePercent,
-            estimatedProfit: profitToday
+            estimatedProfit: profitToday,
+            source
         };
     });
 
@@ -221,31 +237,20 @@ export const getNavByDate = async (fundCode: string, dateStr: string): Promise<n
     return 1.0;
 };
 
-// 板块指数 (Mock)
-export const getSectorIndices = (): SectorIndex[] => {
-    return [
-        { name: '中证白酒', changePercent: 1.24, score: 85, leadingStock: '贵州茅台' },
-        { name: '半导体', changePercent: -0.85, score: 40, leadingStock: '中芯国际' },
-        { name: '新能源车', changePercent: 0.33, score: 60, leadingStock: '比亚迪' },
-        { name: '生物医药', changePercent: -0.12, score: 45, leadingStock: '恒瑞医药' },
-        { name: '人工智能', changePercent: 2.15, score: 95, leadingStock: '科大讯飞' },
-    ];
-};
-
-// 回测逻辑 (前端计算)
+// 回测逻辑
 export const runBacktest = (portfolio: { code: string, amount: number }[], durationYears: number): BacktestResult => {
-    const baseReturn = durationYears * 5; 
-    const volatility = Math.random() * 10;
-    const finalReturn = baseReturn + (Math.random() > 0.5 ? volatility : -volatility);
+    const baseReturn = durationYears * 4; 
+    const volatility = Math.random() * 15;
+    const finalReturn = baseReturn + (Math.random() > 0.4 ? volatility : -volatility);
     
     return {
         totalReturn: parseFloat(finalReturn.toFixed(2)),
         annualizedReturn: parseFloat((finalReturn / durationYears).toFixed(2)),
-        maxDrawdown: parseFloat((Math.random() * 15 + 5).toFixed(2)),
+        maxDrawdown: parseFloat((Math.random() * 20 + 5).toFixed(2)),
         finalValue: portfolio.reduce((sum, p) => sum + p.amount, 0) * (1 + finalReturn / 100),
-        chartData: Array.from({ length: 20 }, (_, i) => ({
+        chartData: Array.from({ length: 30 }, (_, i) => ({
             date: `2023-${i + 1}`,
-            value: 10000 * (1 + (i * finalReturn / 2000))
+            value: 10000 * (1 + (i * finalReturn / 3000))
         }))
     };
 };
