@@ -1,8 +1,9 @@
 import { Fund, Stock, BacktestResult, BacktestPoint, SectorIndex } from '../types';
 
-// --- 配置你的后端地址 ---
-// 默认指向本地 Python 后端。如果你部署了后端，请更改此处。
-const API_BASE = 'http://127.0.0.1:7860';
+// --- 配置后端地址 ---
+// 使用 Optional Chaining 防止在某些非 Vite 环境下报错
+const isProd = import.meta.env?.PROD ?? false;
+const API_BASE = isProd ? '' : 'http://127.0.0.1:7860';
 
 // --- 本地存储键名 ---
 const STORAGE_KEY_FUNDS = 'smartfund_funds_v1';
