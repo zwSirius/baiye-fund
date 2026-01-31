@@ -149,7 +149,7 @@ def get_estimate(code: str):
 @app.get("/api/fund/{code}")
 def get_fund_detail(code: str):
     """
-    获取详情：基金经理 + 十大重仓
+    获取详情：基金经理 + 十大重仓 (精确获取最新季度)
     """
     try:
         # 1. 基金经理
@@ -161,26 +161,52 @@ def get_fund_detail(code: str):
         except Exception as e:
             logger.warning(f"Manager fetch failed: {e}")
 
-        # 2. 十大重仓
+        # 2. 十大重仓 (关键修复: 筛选最新季度 + 排序)
         holdings_data = []
         try:
             current_year = datetime.now().year
-            # 优先查今年
-            portfolio_df = ak.fund_portfolio_hold_em(symbol=code, date=current_year)
-            if portfolio_df.empty:
-                portfolio_df = ak.fund_portfolio_hold_em(symbol=code, date=current_year - 1)
+            years_to_try = [current_year, current_year - 1]
             
-            if not portfolio_df.empty:
-                top10 = portfolio_df.head(10)
-                for _, row in top10.iterrows():
-                    percent = row['占净值比例'] if pd.notna(row['占净值比例']) else 0
-                    holdings_data.append({
-                        "code": str(row['股票代码']),
-                        "name": str(row['股票名称']),
-                        "percent": float(percent),
-                        "currentPrice": 0, 
-                        "changePercent": 0
-                    })
+            portfolio_df = pd.DataFrame()
+            
+            # 尝试获取最近两年的数据
+            for year in years_to_try:
+                try:
+                    df = ak.fund_portfolio_hold_em(symbol=code, date=year)
+                    if not df.empty:
+                        portfolio_df = df
+                        break # 找到数据就停止，年份越新越好
+                except:
+                    continue
+
+            if not portfolio_df.empty and '季度' in portfolio_df.columns:
+                # 1. 找到数据中包含的所有季度 (如: "2024年4季度", "2024年3季度")
+                quarters = portfolio_df['季度'].unique()
+                if len(quarters) > 0:
+                    # 2. 排序找到“最新”的季度 (字符串排序即可，"4季度" > "1季度")
+                    quarters.sort()
+                    latest_quarter = quarters[-1]
+                    logger.info(f"Fetching holdings for {code}: Found data for {latest_quarter}")
+                    
+                    # 3. 只取最新季度的数据
+                    latest_df = portfolio_df[portfolio_df['季度'] == latest_quarter]
+                    
+                    # 4. 按持仓比例降序排列 (防止 API 返回乱序)
+                    # 确保是数字类型
+                    latest_df['占净值比例'] = pd.to_numeric(latest_df['占净值比例'], errors='coerce').fillna(0)
+                    latest_df = latest_df.sort_values(by='占净值比例', ascending=False)
+                    
+                    # 5. 取前10
+                    top10 = latest_df.head(10)
+                    
+                    for _, row in top10.iterrows():
+                        holdings_data.append({
+                            "code": str(row['股票代码']),
+                            "name": str(row['股票名称']),
+                            "percent": float(row['占净值比例']),
+                            "currentPrice": 0, 
+                            "changePercent": 0
+                        })
         except Exception as e:
             logger.warning(f"Holdings fetch failed: {e}")
 
