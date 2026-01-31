@@ -305,18 +305,18 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans pb-20 max-w-md mx-auto shadow-2xl relative overflow-hidden transition-colors">
       {/* Header */}
-      <header className="bg-white dark:bg-slate-900 px-6 pt-12 pb-4 sticky top-0 z-10 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center transition-colors">
+      <header className="bg-white dark:bg-slate-900 px-4 pt-10 pb-3 sticky top-0 z-10 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center transition-colors">
         <div>
-           <h1 className="text-2xl font-black text-slate-800 dark:text-white tracking-tight flex items-center gap-1">
+           <h1 className="text-xl font-black text-slate-800 dark:text-white tracking-tight flex items-center gap-1">
              Smart<span className="text-blue-600">Fund</span>
            </h1>
-           <p className="text-xs text-slate-400 font-medium tracking-wide">AI 驱动的智能养基助手</p>
+           <p className="text-[10px] text-slate-400 font-medium tracking-wide">AI 驱动的智能养基助手</p>
         </div>
         <button 
             onClick={openAddModal}
-            className="bg-blue-600 text-white p-2.5 rounded-full hover:bg-blue-700 shadow-lg shadow-blue-200 dark:shadow-blue-900/30 transition active:scale-95"
+            className="bg-blue-600 text-white p-2 rounded-full hover:bg-blue-700 shadow-lg shadow-blue-200 dark:shadow-blue-900/30 transition active:scale-95"
         >
-           <Plus size={20} />
+           <Plus size={18} />
         </button>
       </header>
 

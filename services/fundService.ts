@@ -199,56 +199,78 @@ export const fetchMarketIndices = async (codes?: string[]): Promise<SectorIndex[
     }
 };
 
-// 6. 批量更新
+// 6. 批量更新 (增强健壮性：防止数据清零)
 export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]> => {
-    const promises = currentFunds.map(async (fund) => {
-        const realData = await fetchRealTimeEstimate(fund.code);
-        
-        let estimatedNav = fund.lastNav;
-        let estimatedChangePercent = 0;
-        let name = fund.name;
-        let lastNav = fund.lastNav;
-        let lastNavDate = fund.lastNavDate;
-        let source = fund.source;
+    // 如果没有基金，直接返回空数组，避免无谓请求
+    if (currentFunds.length === 0) return [];
 
-        if (realData) {
+    const promises = currentFunds.map(async (fund) => {
+        try {
+            const realData = await fetchRealTimeEstimate(fund.code);
+            
+            // 如果获取失败，务必返回原始 fund 对象，而不是 null 或 默认对象
+            if (!realData) {
+                return fund;
+            }
+
+            let estimatedNav = fund.lastNav;
+            let estimatedChangePercent = 0;
+            let name = fund.name;
+            let lastNav = fund.lastNav;
+            let lastNavDate = fund.lastNavDate;
+            let source = fund.source;
+
             const apiDwjz = parseFloat(realData.dwjz);
             const apiGsz = parseFloat(realData.gsz);
 
-            if (apiDwjz > 0) {
+            // 更新单位净值
+            if (!isNaN(apiDwjz) && apiDwjz > 0) {
                 lastNav = apiDwjz;
                 lastNavDate = realData.jzrq;
+            } else if (lastNav === 0) {
+                 // 如果原始净值为0，尝试用估值填充，避免显示0
+                 lastNav = !isNaN(apiGsz) ? apiGsz : 1.0;
             }
 
-            // 如果后端返回了估值（后端已经处理了夜间用真值、日间用估值的逻辑）
-            if (apiGsz > 0) {
+            // 更新估值和涨跌幅
+            if (!isNaN(apiGsz) && apiGsz > 0) {
                 estimatedNav = apiGsz;
                 estimatedChangePercent = parseFloat(realData.gszzl || "0");
-                source = realData.source; // 标记数据来源
-            } else if (apiDwjz > 0) {
-                // 兜底
+                source = realData.source;
+            } else if (!isNaN(apiDwjz) && apiDwjz > 0) {
+                // 如果没有估值，用净值兜底
                 estimatedNav = apiDwjz;
                 estimatedChangePercent = 0;
+            } else {
+                // 如果API数据完全不可用，保持原状
+                 estimatedNav = fund.estimatedNav > 0 ? fund.estimatedNav : 1.0;
             }
 
-            if (realData.name) name = realData.name;
+            // 优先使用 API 返回的名称，如果 API 没返回（很少见），用旧的
+            if (realData.name && realData.name.length > 0) {
+                name = realData.name;
+            }
+
+            const profitToday = (estimatedNav - lastNav) * fund.holdingShares;
+
+            return {
+                ...fund,
+                name,
+                lastNav,
+                lastNavDate,
+                estimatedNav,
+                estimatedChangePercent,
+                estimatedProfit: profitToday,
+                source
+            };
+        } catch (e) {
+            console.error(`Update failed for ${fund.code}, keeping original data`, e);
+            return fund; // 出错时返回原始数据，防止列表清空
         }
-
-        const profitToday = (estimatedNav - lastNav) * fund.holdingShares;
-
-        return {
-            ...fund,
-            name,
-            lastNav,
-            lastNavDate,
-            estimatedNav,
-            estimatedChangePercent,
-            estimatedProfit: profitToday,
-            source
-        };
     });
 
-    return await Promise.all(promises);
+    const results = await Promise.all(promises);
+    return results;
 };
 
 // 辅助：获取某个日期的净值

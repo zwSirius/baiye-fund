@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI } from "@google/genai";
 import { ChatMessage } from '../types';
-import { Send, Bot, User, Loader2, Sparkles } from 'lucide-react';
+import { Send, Bot, User, Loader2, Sparkles, Lock, Key, LogIn } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 interface AIChatProps {
@@ -9,6 +9,13 @@ interface AIChatProps {
 }
 
 export const AIChat: React.FC<AIChatProps> = ({ apiKey }) => {
+  // Auth State
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+
+  // Chat State
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: '1',
@@ -20,13 +27,33 @@ export const AIChat: React.FC<AIChatProps> = ({ apiKey }) => {
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Check Auth on Mount
+  useEffect(() => {
+    const today = new Date().toDateString();
+    const storedAuthDate = localStorage.getItem('smartfund_ai_auth_date');
+    if (storedAuthDate === today) {
+        setIsAuthenticated(true);
+    }
+  }, []);
+
+  const handleLogin = () => {
+      if (username === 'luoxin1997' && password === 'luoxin9707') {
+          const today = new Date().toDateString();
+          localStorage.setItem('smartfund_ai_auth_date', today);
+          setIsAuthenticated(true);
+          setAuthError('');
+      } else {
+          setAuthError('账号或密码错误');
+      }
+  };
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, isAuthenticated]);
 
   const handleSend = async () => {
     if (!input.trim()) return;
@@ -90,23 +117,76 @@ export const AIChat: React.FC<AIChatProps> = ({ apiKey }) => {
     }
   };
 
+  if (!isAuthenticated) {
+      return (
+          <div className="flex flex-col h-[calc(100vh-140px)] items-center justify-center p-6 bg-slate-50 dark:bg-slate-900">
+              <div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-xl w-full max-w-sm text-center animate-scale-in">
+                  <div className="w-16 h-16 bg-indigo-100 dark:bg-indigo-900/30 rounded-full flex items-center justify-center mx-auto mb-4 text-indigo-600 dark:text-indigo-400">
+                      <Lock size={32} />
+                  </div>
+                  <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-2">AI 助手安全验证</h2>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">为了保障服务质量，每日首次使用需验证身份</p>
+
+                  <div className="space-y-4 text-left">
+                      <div>
+                          <label className="text-xs font-bold text-slate-500 mb-1 block">账号</label>
+                          <div className="relative">
+                              <User size={16} className="absolute left-3 top-3 text-slate-400"/>
+                              <input 
+                                  type="text" 
+                                  value={username}
+                                  onChange={e => setUsername(e.target.value)}
+                                  placeholder="请输入账号"
+                                  className="w-full pl-9 pr-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:text-white"
+                              />
+                          </div>
+                      </div>
+                      <div>
+                          <label className="text-xs font-bold text-slate-500 mb-1 block">密码</label>
+                          <div className="relative">
+                              <Key size={16} className="absolute left-3 top-3 text-slate-400"/>
+                              <input 
+                                  type="password" 
+                                  value={password}
+                                  onChange={e => setPassword(e.target.value)}
+                                  placeholder="请输入密码"
+                                  className="w-full pl-9 pr-4 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:text-white"
+                              />
+                          </div>
+                      </div>
+                      
+                      {authError && <div className="text-xs text-red-500 text-center font-bold">{authError}</div>}
+
+                      <button 
+                        onClick={handleLogin}
+                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl transition active:scale-95 flex items-center justify-center gap-2"
+                      >
+                          <LogIn size={18} /> 登录并开始对话
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )
+  }
+
   return (
     <div className="flex flex-col h-[calc(100vh-140px)]">
-        <div className="bg-white p-4 shadow-sm border-b border-slate-100 flex items-center gap-2">
+        <div className="bg-white dark:bg-slate-900 p-4 shadow-sm border-b border-slate-100 dark:border-slate-800 flex items-center gap-2 sticky top-0 z-10">
             <Sparkles className="text-indigo-500" size={20} />
-            <h2 className="font-bold text-slate-800">AI 投资顾问</h2>
+            <h2 className="font-bold text-slate-800 dark:text-white text-sm">AI 投资顾问</h2>
+            <span className="text-[10px] text-green-500 bg-green-50 dark:bg-green-900/20 px-2 py-0.5 rounded-full">已认证</span>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50">
+        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50 dark:bg-slate-950">
             {messages.map((msg) => (
                 <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${msg.role === 'user' ? 'bg-slate-200' : 'bg-indigo-100 text-indigo-600'}`}>
-                        {msg.role === 'user' ? <User size={16} /> : <Bot size={16} />}
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${msg.role === 'user' ? 'bg-slate-200 dark:bg-slate-700' : 'bg-indigo-100 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400'}`}>
+                        {msg.role === 'user' ? <User size={16} className="text-slate-500 dark:text-slate-300"/> : <Bot size={16} />}
                     </div>
-                    <div className={`max-w-[80%] rounded-2xl p-3 text-sm leading-relaxed shadow-sm ${
+                    <div className={`max-w-[85%] rounded-2xl p-3 text-sm leading-relaxed shadow-sm ${
                         msg.role === 'user' 
                         ? 'bg-blue-600 text-white rounded-tr-none' 
-                        : 'bg-white text-slate-700 border border-slate-100 rounded-tl-none'
+                        : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-100 dark:border-slate-700 rounded-tl-none'
                     }`}>
                         <ReactMarkdown>{msg.text}</ReactMarkdown>
                     </div>
@@ -114,10 +194,10 @@ export const AIChat: React.FC<AIChatProps> = ({ apiKey }) => {
             ))}
             {isLoading && (
                  <div className="flex gap-3">
-                    <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center flex-shrink-0">
+                    <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 flex items-center justify-center flex-shrink-0">
                         <Bot size={16} />
                     </div>
-                    <div className="bg-white p-3 rounded-2xl rounded-tl-none border border-slate-100 shadow-sm flex items-center">
+                    <div className="bg-white dark:bg-slate-800 p-3 rounded-2xl rounded-tl-none border border-slate-100 dark:border-slate-700 shadow-sm flex items-center">
                         <Loader2 className="animate-spin text-indigo-500" size={16} />
                         <span className="text-xs text-slate-400 ml-2">正在思考...</span>
                     </div>
@@ -126,7 +206,7 @@ export const AIChat: React.FC<AIChatProps> = ({ apiKey }) => {
             <div ref={messagesEndRef} />
         </div>
 
-        <div className="p-4 bg-white border-t border-slate-200">
+        <div className="p-3 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800">
             <div className="relative flex items-center">
                 <input
                     type="text"
@@ -134,12 +214,12 @@ export const AIChat: React.FC<AIChatProps> = ({ apiKey }) => {
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleSend()}
                     placeholder="问问它：现在适合买白酒吗？"
-                    className="w-full bg-slate-100 text-slate-800 rounded-full pl-4 pr-12 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
+                    className="w-full bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-white rounded-full pl-4 pr-12 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50"
                 />
                 <button 
                     onClick={handleSend}
                     disabled={!input.trim() || isLoading}
-                    className="absolute right-2 p-2 bg-indigo-600 text-white rounded-full disabled:opacity-50 disabled:cursor-not-allowed hover:bg-indigo-700 transition"
+                    className="absolute right-1.5 p-1.5 bg-indigo-600 text-white rounded-full disabled:opacity-50 disabled:cursor-not-allowed hover:bg-indigo-700 transition"
                 >
                     <Send size={16} />
                 </button>
