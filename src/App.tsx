@@ -125,6 +125,11 @@ const App: React.FC = () => {
     setAiLoading(false);
   };
 
+  const goToSettings = () => {
+      setActiveTab(TabView.SETTINGS);
+      setAIModalOpen(false); // Close AI modal if open
+  };
+
   // Fund Operations
   const handleConfirmTransaction = (t: Transaction) => {
       if (!txFund) return;
@@ -280,7 +285,7 @@ const App: React.FC = () => {
 
         {activeTab === TabView.TOOLS && <ToolsDashboard funds={funds} />}
         {activeTab === TabView.BACKTEST && <BacktestDashboard availableFunds={funds} />}
-        {activeTab === TabView.AI_INSIGHTS && <AIChat />}
+        {activeTab === TabView.AI_INSIGHTS && <AIChat onGoToSettings={goToSettings} />}
         
         {activeTab === TabView.SETTINGS && (
             <div className="p-6 pb-24">
@@ -369,7 +374,7 @@ const App: React.FC = () => {
       )}
 
       {/* Other Modals */}
-      <AIModal isOpen={isAIModalOpen} onClose={() => setAIModalOpen(false)} fundName={currentAnalyzingFund} report={aiReport} isLoading={aiLoading} />
+      <AIModal isOpen={isAIModalOpen} onClose={() => setAIModalOpen(false)} fundName={currentAnalyzingFund} report={aiReport} isLoading={aiLoading} onGoToSettings={goToSettings} />
       <FundFormModal isOpen={isAddModalOpen} onClose={() => setAddModalOpen(false)} onSave={addOrUpdateFund} initialFund={editingFund} groups={groups} currentGroupId={currentGroupId} isWatchlistMode={isWatchlistMode} />
       <MarketConfigModal isOpen={isMarketConfigOpen} onClose={() => setIsMarketConfigOpen(false)} currentCodes={marketCodes} onSave={updateMarketCodes} />
       

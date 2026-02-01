@@ -5,7 +5,11 @@ import { Send, Bot, User, Loader2, Sparkles, Lock, Settings } from 'lucide-react
 import ReactMarkdown from 'react-markdown';
 import { getEffectiveApiKey } from '../services/geminiService';
 
-export const AIChat: React.FC = () => {
+interface AIChatProps {
+    onGoToSettings: () => void;
+}
+
+export const AIChat: React.FC<AIChatProps> = ({ onGoToSettings }) => {
   // --- Auth State ---
   const [isAuthorized, setIsAuthorized] = useState(false);
 
@@ -120,10 +124,13 @@ export const AIChat: React.FC = () => {
                       <p>3. 您的 Key 仅保存在本地浏览器中。</p>
                   </div>
 
-                  {/* 这里只是提示，实际上通过导航栏切换 */}
-                  <div className="flex items-center justify-center gap-2 text-indigo-600 dark:text-indigo-400 font-bold text-sm animate-bounce">
-                      <Settings size={16} /> 点击底部 "设置" 进行配置
-                  </div>
+                  <button 
+                    onClick={onGoToSettings}
+                    className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl shadow-lg shadow-indigo-200 dark:shadow-indigo-900/20 active:scale-95 transition flex items-center justify-center gap-2"
+                  >
+                      <Settings size={18} />
+                      前往设置配置 Key
+                  </button>
               </div>
           </div>
       );

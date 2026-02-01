@@ -15,7 +15,7 @@ export const analyzeFund = async (fund: Fund): Promise<string> => {
   const apiKey = getEffectiveApiKey();
   
   if (!apiKey) {
-      return "⚠️ AI 服务未授权。\n\n请前往「设置」页面配置您的 Google Gemini API Key 以使用智能分析功能。";
+      return "⚠️ AI 服务未授权。\n\n检测到您尚未配置 API Key。\n请前往「设置」页面填入您的 Google Gemini API Key 以解锁智能分析功能。";
   }
 
   const prompt = `
@@ -46,7 +46,7 @@ export const analyzeFund = async (fund: Fund): Promise<string> => {
   } catch (error: any) {
     console.error("Gemini API Error:", error);
     if (error.message?.includes('401') || error.message?.includes('API key')) {
-        return "API Key 无效或过期，请检查配置。";
+        return "⚠️ API Key 无效或过期。\n\nGoogle 返回了认证错误。请前往「设置」页面检查您的 Key 是否正确，或是否已过期。";
     }
     return "分析服务暂时不可用，请稍后再试。";
   }
