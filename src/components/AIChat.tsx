@@ -1,10 +1,17 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI } from "@google/genai";
 import { ChatMessage } from '../types';
-import { Send, Bot, User, Loader2, Sparkles } from 'lucide-react';
+import { Send, Bot, User, Loader2, Sparkles, Lock, Key } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { getEffectiveApiKey } from '../services/geminiService';
 
 export const AIChat: React.FC = () => {
+  // --- Auth State ---
+  const [isAuthorized, setIsAuthorized] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+
   // --- Chat State ---
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -17,13 +24,31 @@ export const AIChat: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+      // Check auth on mount
+      const key = getEffectiveApiKey();
+      if (key) {
+          setIsAuthorized(true);
+      }
+  }, []);
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, isAuthorized]);
+
+  const handleLogin = () => {
+      if (username === 'baiye' && password === '1997') {
+          localStorage.setItem('smartfund_vip_unlocked', 'true');
+          setIsAuthorized(true);
+          setLoginError('');
+      } else {
+          setLoginError('账号或密码错误');
+      }
+  };
 
   const handleSend = async () => {
     if (!input.trim()) return;
@@ -39,7 +64,10 @@ export const AIChat: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const apiKey = getEffectiveApiKey();
+      if (!apiKey) throw new Error("API Key Invalid");
+
+      const ai = new GoogleGenAI({ apiKey });
       const model = "gemini-3-flash-preview";
       
       const response = await ai.models.generateContent({
@@ -61,7 +89,7 @@ export const AIChat: React.FC = () => {
 
     } catch (error: any) {
       console.error(error);
-      const errorMsg = "网络连接异常，请稍后再试。";
+      const errorMsg = "网络连接异常或服务未授权，请检查设置。";
 
       setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
@@ -73,7 +101,54 @@ export const AIChat: React.FC = () => {
     }
   };
 
-  // --- Render Chat Interface ---
+  // --- Login View ---
+  if (!isAuthorized) {
+      return (
+          <div className="flex flex-col items-center justify-center h-[calc(100vh-140px)] bg-slate-50 dark:bg-slate-950 px-6">
+              <div className="bg-white dark:bg-slate-900 w-full max-w-sm p-8 rounded-2xl shadow-xl border border-slate-100 dark:border-slate-800 text-center animate-scale-in">
+                  <div className="w-16 h-16 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Lock size={32} />
+                  </div>
+                  <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-2">AI 服务未授权</h2>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">
+                      请输入账号密码解锁内置通道，<br/>或在设置页面配置自定义 API Key。
+                  </p>
+                  
+                  <div className="space-y-3">
+                      <input 
+                        type="text" 
+                        placeholder="账号"
+                        value={username}
+                        onChange={e => setUsername(e.target.value)}
+                        className="w-full p-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                      <input 
+                        type="password" 
+                        placeholder="密码"
+                        value={password}
+                        onChange={e => setPassword(e.target.value)}
+                        className="w-full p-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                  </div>
+
+                  {loginError && <div className="text-red-500 text-xs mt-3">{loginError}</div>}
+
+                  <button 
+                    onClick={handleLogin}
+                    className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl mt-6 hover:bg-indigo-700 active:scale-95 transition"
+                  >
+                      解锁通道
+                  </button>
+
+                  <p className="text-xs text-slate-400 mt-4">
+                      已有 API Key? 请前往 <span className="text-indigo-500 font-bold">设置</span> 页面配置
+                  </p>
+              </div>
+          </div>
+      );
+  }
+
+  // --- Chat Interface ---
   return (
     <div className="flex flex-col h-[calc(100vh-140px)]">
         {/* Status Header */}
@@ -81,6 +156,9 @@ export const AIChat: React.FC = () => {
             <div className="flex items-center gap-2">
                 <Sparkles className="text-indigo-500" size={20} />
                 <h2 className="font-bold text-slate-800 dark:text-white text-sm">AI 投资顾问</h2>
+            </div>
+            <div className="text-[10px] text-green-500 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded-full flex items-center gap-1">
+                <Key size={10} /> 已连接
             </div>
         </div>
 

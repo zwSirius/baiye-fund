@@ -177,21 +177,31 @@ class AkshareService:
             return []
 
     @staticmethod
-    def fetch_stock_quotes_sync(codes: List[str]) -> Dict[str, float]:
+    def fetch_stock_quotes_sync(codes: List[str]) -> Dict[str, Dict[str, float]]:
         if not codes: return {}
         unique = list(set(codes))
         quotes = {}
         batch_size = 40
         for i in range(0, len(unique), batch_size):
             batch = unique[i:i+batch_size]
-            secids = [f"1.{c}" if c.startswith('6') else f"0.{c}" for c in batch]
-            url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f3,f12&secids={','.join(secids)}"
+            secids = []
+            for c in batch:
+                if c.startswith('6'): secids.append(f"1.{c}")
+                elif c.startswith('0') or c.startswith('3'): secids.append(f"0.{c}")
+                elif c.startswith('4') or c.startswith('8'): secids.append(f"0.{c}")
+                else: secids.append(f"0.{c}")
+            
+            # f2: price, f3: change%
+            url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f2,f3,f12&secids={','.join(secids)}"
             try:
                 resp = GlobalSession.get().get(url, headers=AkshareService.get_headers(), timeout=3.0)
                 data = resp.json()
                 if data and 'data' in data and 'diff' in data['data']:
                     for item in data['data']['diff']:
-                        quotes[str(item['f12'])] = float(item['f3']) if item['f3'] is not None else 0.0
+                        quotes[str(item['f12'])] = {
+                            "price": float(item['f2']) if item['f2'] != '-' else 0.0,
+                            "change": float(item['f3']) if item['f3'] != '-' else 0.0
+                        }
             except: pass
         return quotes
 
@@ -252,7 +262,14 @@ class FundController:
         # Fetch Quotes for holdings
         if holdings:
             quotes = await run_in_threadpool(AkshareService.fetch_stock_quotes_sync, [h['code'] for h in holdings])
-            for h in holdings: h['changePercent'] = quotes.get(h['code'], 0)
+            for h in holdings: 
+                q = quotes.get(h['code'])
+                if q:
+                    h['changePercent'] = q['change']
+                    h['currentPrice'] = q['price']
+                else:
+                    h['changePercent'] = 0
+                    h['currentPrice'] = 0
 
         return {"code": code, "manager": manager_name, "holdings": holdings}
 
@@ -358,7 +375,9 @@ class FundController:
                 total_weight = 0
                 for h in holdings:
                     w = h['percent']
-                    weighted_change += (quotes.get(h['code'], 0) * w)
+                    q = quotes.get(h['code'])
+                    change = q['change'] if q else 0
+                    weighted_change += (change * w)
                     total_weight += w
                 
                 est_change = 0

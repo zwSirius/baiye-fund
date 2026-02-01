@@ -1,8 +1,8 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Fund, Transaction } from '../types';
 import { getFundHistoryData, fetchFundDetails } from '../services/fundService';
-import { ChevronLeft, FileText, Edit2, Trash2, History, TrendingUp, Loader2, PieChart as PieChartIcon, Activity, TrendingDown } from 'lucide-react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { ChevronLeft, FileText, Edit2, Trash2, History, TrendingUp, Loader2, Activity, TrendingDown, Layers } from 'lucide-react';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 interface FundDetailProps {
   fund: Fund;
@@ -30,8 +30,6 @@ const CustomizedDot = (props: any) => {
   }
   return null;
 };
-
-const HOLDING_COLORS = ['#3b82f6', '#ef4444', '#f59e0b', '#22c55e', '#6366f1', '#ec4899', '#8b5cf6', '#14b8a6', '#f97316', '#64748b'];
 
 export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, onDelete, onBuy, onSell }) => {
   const [chartPeriod, setChartPeriod] = useState<number>(90);
@@ -106,10 +104,6 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
     }
   }
 
-  const holdingsPieData = useMemo(() => {
-      return detailedFund.holdings.map(h => ({ name: h.name, value: h.percent }));
-  }, [detailedFund.holdings]);
-
   const displayFund = detailedFund;
 
   // Calculate Missing Metrics
@@ -150,7 +144,9 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
           <div className="bg-white dark:bg-slate-900 p-6 mb-2">
               <div className="flex justify-between items-start">
                   <div>
-                    <div className="text-xs text-slate-400 mb-1">实时净值 ({displayFund.lastNavDate})</div>
+                    <div className="flex items-center gap-2 text-xs text-slate-400 mb-1">
+                        实时估值 {displayFund.source === 'holdings_calc_batch' ? <span className="text-blue-500 bg-blue-50 dark:bg-blue-900/30 px-1 rounded scale-90 origin-left">重仓股推算</span> : null}
+                    </div>
                     <div className="flex items-baseline gap-3">
                         <span className={`text-3xl font-black ${displayFund.estimatedChangePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
                             {displayFund.estimatedNav.toFixed(4)}
@@ -160,9 +156,12 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                         </span>
                     </div>
                   </div>
+                  <div className="text-right">
+                       <div className="text-xs text-slate-400 mb-1">净值日期</div>
+                       <div className="font-medium text-slate-700 dark:text-slate-300">{displayFund.lastNavDate}</div>
+                  </div>
               </div>
 
-              {/* Added Key Metrics Row */}
               <div className="grid grid-cols-3 gap-2 mt-6">
                   <div className="text-center p-2 bg-slate-50 dark:bg-slate-800 rounded-lg">
                       <div className="text-[10px] text-slate-400 mb-1">持有金额</div>
@@ -285,7 +284,10 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                     <div className="flex items-center gap-2 mb-4 justify-between">
                         <div className="flex items-center gap-2">
                             <FileText size={18} className="text-blue-500" />
-                            <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm">持仓明细 (Top 10)</h3>
+                            <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm">十大重仓实时动向</h3>
+                        </div>
+                        <div className="text-[10px] text-slate-400 bg-slate-50 dark:bg-slate-800 px-2 py-1 rounded">
+                            贡献度 = 持仓占比 × 涨跌幅
                         </div>
                     </div>
                     
@@ -295,51 +297,51 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                         </div>
                     ) : (
                         <div>
-                             {displayFund.holdings.length > 0 && (
-                                <div className="flex items-center justify-center h-32 mb-4">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <PieChart>
-                                            <Pie
-                                                data={holdingsPieData}
-                                                cx="50%"
-                                                cy="50%"
-                                                innerRadius={25}
-                                                outerRadius={45}
-                                                paddingAngle={2}
-                                                dataKey="value"
-                                                stroke="none"
-                                            >
-                                                {holdingsPieData.map((entry, index) => (
-                                                    <Cell key={`cell-${index}`} fill={HOLDING_COLORS[index % HOLDING_COLORS.length]} />
-                                                ))}
-                                            </Pie>
-                                            <Tooltip />
-                                        </PieChart>
-                                    </ResponsiveContainer>
-                                </div>
-                             )}
+                             {/* Headers */}
+                             <div className="flex text-[10px] text-slate-400 mb-2 px-1">
+                                 <div className="w-[40%]">股票名称</div>
+                                 <div className="w-[30%] text-right">现价/涨跌</div>
+                                 <div className="w-[30%] text-right">持仓/贡献</div>
+                             </div>
 
-                            <div className="space-y-3">
-                                {displayFund.holdings.length > 0 ? displayFund.holdings.map((stock, idx) => (
-                                    <div key={stock.code} className="flex items-center justify-between text-sm">
-                                        <div className="flex items-center gap-3">
-                                            <span className="text-slate-300 w-4 font-mono italic">{idx + 1}</span>
-                                            <div>
-                                                <div className="font-medium text-slate-700 dark:text-slate-200">{stock.name}</div>
-                                                <div className="text-[10px] text-slate-400">{stock.code}</div>
+                             <div className="space-y-3">
+                                {displayFund.holdings.length > 0 ? displayFund.holdings.map((stock, idx) => {
+                                    const contribution = (stock.percent * stock.changePercent) / 100;
+                                    return (
+                                        <div key={stock.code} className="flex items-center justify-between text-sm py-1">
+                                            {/* Name & Code */}
+                                            <div className="w-[40%] flex items-center gap-2">
+                                                <span className={`text-[10px] w-4 h-4 flex items-center justify-center rounded ${idx < 3 ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' : 'bg-slate-100 text-slate-400 dark:bg-slate-800'}`}>{idx + 1}</span>
+                                                <div className="overflow-hidden">
+                                                    <div className="font-bold text-slate-700 dark:text-slate-200 truncate">{stock.name}</div>
+                                                    <div className="text-[10px] text-slate-400 font-mono">{stock.code}</div>
+                                                </div>
+                                            </div>
+                                            
+                                            {/* Price & Change */}
+                                            <div className="w-[30%] text-right">
+                                                <div className="font-mono text-xs text-slate-700 dark:text-slate-300">{stock.currentPrice > 0 ? stock.currentPrice.toFixed(2) : '--'}</div>
+                                                <div className={`text-xs font-bold ${stock.changePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
+                                                    {stock.changePercent > 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
+                                                </div>
+                                            </div>
+
+                                            {/* Weight & Contribution */}
+                                            <div className="w-[30%] text-right pl-2">
+                                                <div className="text-xs text-slate-500 dark:text-slate-400">{stock.percent}%</div>
+                                                <div className={`text-[10px] font-medium ${contribution >= 0 ? 'text-up-red' : 'text-down-green'}`}>
+                                                     {contribution > 0 ? '+' : ''}{contribution.toFixed(2)}%
+                                                </div>
+                                                {/* Visual Bar for Weight */}
+                                                <div className="w-full h-1 bg-slate-100 dark:bg-slate-800 rounded-full mt-1 overflow-hidden">
+                                                    <div className="h-full bg-blue-500 opacity-50" style={{width: `${stock.percent * 5}%`}}></div>
+                                                </div>
                                             </div>
                                         </div>
-                                        <div className="text-right w-24">
-                                            <div className="font-medium text-slate-700 dark:text-slate-200">
-                                                {stock.percent > 0 ? stock.percent + '%' : '--'}
-                                            </div>
-                                            <div className="w-16 h-1 bg-slate-100 dark:bg-slate-800 rounded-full ml-auto mt-1 overflow-hidden">
-                                                <div className="h-full bg-blue-500" style={{width: `${stock.percent * 5}%`}}></div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )) : (
-                                    <div className="text-center text-slate-400 text-xs py-4">
+                                    );
+                                }) : (
+                                    <div className="text-center text-slate-400 text-xs py-4 flex flex-col items-center">
+                                        <Layers size={24} className="mb-2 opacity-20"/>
                                         暂无持仓数据或获取失败
                                     </div>
                                 )}

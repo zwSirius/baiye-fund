@@ -19,7 +19,7 @@ import { Watchlist } from './components/Watchlist';
 import { MarketConfigModal } from './components/MarketConfigModal';
 
 // Icons
-import { LayoutGrid, PieChart, Settings, Bot, Plus, Moon, Sun, Monitor, Download, Upload, Clipboard, ClipboardPaste, Users, X, Eye, EyeOff, PenTool } from 'lucide-react';
+import { LayoutGrid, PieChart, Settings, Bot, Plus, Moon, Sun, Monitor, Download, Upload, Clipboard, ClipboardPaste, Users, X, Eye, EyeOff, PenTool, Key } from 'lucide-react';
 
 const NavBtn = ({ icon, label, isActive, onClick }: any) => (
     <button onClick={onClick} className={`flex flex-col items-center w-14 pb-4 transition ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'}`}>
@@ -41,6 +41,9 @@ const App: React.FC = () => {
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system');
   const [isPrivacyMode, setIsPrivacyMode] = useState(false);
   const [currentGroupId, setCurrentGroupId] = useState<string>('all'); 
+  
+  // Settings State
+  const [customApiKey, setCustomApiKey] = useState('');
   
   // Modal State
   const [isAddModalOpen, setAddModalOpen] = useState(false);
@@ -91,6 +94,9 @@ const App: React.FC = () => {
   useEffect(() => {
     const storedPrivacy = localStorage.getItem('smartfund_privacy_mode');
     if (storedPrivacy === 'true') setIsPrivacyMode(true);
+    
+    const storedKey = localStorage.getItem('smartfund_custom_key');
+    if (storedKey) setCustomApiKey(storedKey);
   }, []);
 
   // --- Handlers ---
@@ -99,6 +105,11 @@ const App: React.FC = () => {
       const newVal = !isPrivacyMode;
       setIsPrivacyMode(newVal);
       localStorage.setItem('smartfund_privacy_mode', String(newVal));
+  };
+
+  const saveCustomApiKey = () => {
+      localStorage.setItem('smartfund_custom_key', customApiKey.trim());
+      alert('API Key 已保存');
   };
 
   // AI
@@ -270,10 +281,12 @@ const App: React.FC = () => {
         {activeTab === TabView.AI_INSIGHTS && <AIChat />}
         
         {activeTab === TabView.SETTINGS && (
-            <div className="p-6">
+            <div className="p-6 pb-24">
                 <h2 className="text-xl font-bold mb-4 dark:text-white">设置</h2>
-                <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 divide-y divide-slate-50 dark:divide-slate-800">
-                    <div className="p-4 flex justify-between items-center">
+                <div className="space-y-4">
+                    
+                    {/* Appearance */}
+                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 p-4 flex justify-between items-center">
                         <span>外观模式</span>
                         <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
                             <button onClick={() => setTheme('light')} className={`p-1.5 rounded-md ${theme === 'light' ? 'bg-white shadow text-blue-600' : 'text-slate-400'}`}><Sun size={16} /></button>
@@ -282,20 +295,47 @@ const App: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="p-4">
-                        <div className="font-bold mb-2">数据备份与恢复</div>
-                        <div className="grid grid-cols-2 gap-3 mb-4">
-                            <button onClick={handleDownloadBackup} className="bg-slate-50 border py-2 rounded-lg text-xs font-bold flex justify-center gap-2"><Download size={14}/> 导出文件</button>
-                            <label className="bg-slate-50 border py-2 rounded-lg text-xs font-bold flex justify-center gap-2 cursor-pointer"><Upload size={14}/> 导入文件 <input type="file" accept=".json" onChange={(e) => { const f = e.target.files?.[0]; if(f) { const r = new FileReader(); r.onload = (ev) => handleImport(ev.target?.result as string); r.readAsText(f); } }} className="hidden" /></label>
+                    {/* AI Configuration */}
+                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 p-4">
+                        <div className="flex items-center gap-2 font-bold mb-3 text-slate-800 dark:text-white">
+                            <Key size={18} className="text-indigo-500" /> AI 配置
                         </div>
-                        <div className="grid grid-cols-2 gap-3">
-                            <button onClick={() => { navigator.clipboard.writeText(exportData()); alert("已复制"); }} className="bg-blue-50 text-blue-600 py-2 rounded-lg text-xs font-bold flex justify-center gap-2"><Clipboard size={14}/> 复制数据</button>
-                            <button onClick={() => setIsImportTextOpen(true)} className="bg-indigo-50 text-indigo-600 py-2 rounded-lg text-xs font-bold flex justify-center gap-2"><ClipboardPaste size={14}/> 粘贴导入</button>
+                        <div className="text-xs text-slate-500 dark:text-slate-400 mb-2">
+                            配置自定义 Google Gemini API Key 以使用所有 AI 功能。
+                            <br/>如果没有 Key，可在 AI 页面通过账号登录使用内置通道。
+                        </div>
+                        <div className="flex gap-2">
+                            <input 
+                                type="password" 
+                                value={customApiKey}
+                                onChange={(e) => setCustomApiKey(e.target.value)}
+                                placeholder="sk-..."
+                                className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500"
+                            />
+                            <button 
+                                onClick={saveCustomApiKey}
+                                className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-bold active:scale-95 transition"
+                            >
+                                保存
+                            </button>
                         </div>
                     </div>
 
-                    <div className="p-4 flex justify-between items-center">
-                        <span className="text-red-500">重置所有数据</span>
+                    {/* Data Management */}
+                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 p-4">
+                        <div className="font-bold mb-2">数据备份与恢复</div>
+                        <div className="grid grid-cols-2 gap-3 mb-4">
+                            <button onClick={handleDownloadBackup} className="bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 py-2 rounded-lg text-xs font-bold flex justify-center gap-2"><Download size={14}/> 导出文件</button>
+                            <label className="bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 py-2 rounded-lg text-xs font-bold flex justify-center gap-2 cursor-pointer"><Upload size={14}/> 导入文件 <input type="file" accept=".json" onChange={(e) => { const f = e.target.files?.[0]; if(f) { const r = new FileReader(); r.onload = (ev) => handleImport(ev.target?.result as string); r.readAsText(f); } }} className="hidden" /></label>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            <button onClick={() => { navigator.clipboard.writeText(exportData()); alert("已复制"); }} className="bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 py-2 rounded-lg text-xs font-bold flex justify-center gap-2"><Clipboard size={14}/> 复制数据</button>
+                            <button onClick={() => setIsImportTextOpen(true)} className="bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 py-2 rounded-lg text-xs font-bold flex justify-center gap-2"><ClipboardPaste size={14}/> 粘贴导入</button>
+                        </div>
+                    </div>
+
+                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 p-4 flex justify-between items-center">
+                        <span className="text-red-500 font-medium">重置所有数据</span>
                         <button onClick={() => { if(confirm("确定清空？")) { localStorage.clear(); window.location.reload(); } }} className="text-xs border border-red-200 text-red-500 px-3 py-1 rounded-full">清空</button>
                     </div>
                 </div>
@@ -304,7 +344,7 @@ const App: React.FC = () => {
       </main>
 
       {/* Nav */}
-      <nav className="fixed bottom-0 w-full bg-white/90 backdrop-blur-md dark:bg-slate-900/90 border-t h-[80px] flex justify-between items-end pb-safe pt-2 px-2 z-40 max-w-md">
+      <nav className="fixed bottom-0 w-full bg-white/90 backdrop-blur-md dark:bg-slate-900/90 border-t border-slate-200 dark:border-slate-800 h-[80px] flex justify-between items-end pb-safe pt-2 px-2 z-40 max-w-md">
         <NavBtn icon={<LayoutGrid size={22}/>} label="资产" isActive={activeTab === TabView.DASHBOARD} onClick={() => setActiveTab(TabView.DASHBOARD)} />
         <NavBtn icon={<Eye size={22}/>} label="自选" isActive={activeTab === TabView.WATCHLIST} onClick={() => setActiveTab(TabView.WATCHLIST)} />
         <NavBtn icon={<PieChart size={22}/>} label="市场" isActive={activeTab === TabView.MARKET} onClick={() => setActiveTab(TabView.MARKET)} />
