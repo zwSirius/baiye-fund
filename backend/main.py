@@ -209,15 +209,25 @@ class AkshareService:
     def fetch_fund_list_sync():
         try:
             df = ak.fund_name_em()
-            return [
-                {
-                    "code": str(row['基金代码']),
-                    "name": str(row['基金简称']),
-                    "type": str(row['基金类型']),
-                    "pinyin": str(row['拼音缩写'])
-                } for _, row in df.iterrows()
-            ]
-        except: return []
+            # Rename columns to standard keys
+            df = df.rename(columns={
+                '基金代码': 'code',
+                '基金简称': 'name',
+                '基金类型': 'type',
+                '拼音缩写': 'pinyin'
+            })
+            # Select relevant columns and convert to list of dicts directly (much faster than iterrows)
+            result = df[['code', 'name', 'type', 'pinyin']].to_dict('records')
+            # Ensure all values are strings to prevent JSON serialization issues
+            for r in result:
+                r['code'] = str(r['code'])
+                r['name'] = str(r['name'])
+                r['type'] = str(r['type'])
+                r['pinyin'] = str(r['pinyin'])
+            return result
+        except Exception as e:
+            logger.error(f"Fetch fund list error: {e}")
+            return []
 
 # --- Business Logic Controller ---
 

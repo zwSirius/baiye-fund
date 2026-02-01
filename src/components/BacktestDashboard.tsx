@@ -18,6 +18,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ availableF
   const [portfolio, setPortfolio] = useState<PortfolioItem[]>([]);
   const [duration, setDuration] = useState<number>(1); // 1, 3, 5 years
   const [result, setResult] = useState<BacktestResult | null>(null);
+  const [isRunning, setIsRunning] = useState(false);
 
   // Search State
   const [isSearching, setIsSearching] = useState(false);
@@ -58,10 +59,18 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ availableF
       setPortfolio(prev => prev.map(p => p.code === code ? { ...p, amount: num } : p));
   };
 
-  const handleRun = () => {
+  const handleRun = async () => {
     if (portfolio.length === 0) return;
-    const res = runBacktest(portfolio.map(p => ({ code: p.code, amount: p.amount })), duration);
-    setResult(res);
+    setIsRunning(true);
+    try {
+        const res = await runBacktest(portfolio.map(p => ({ code: p.code, amount: p.amount })), duration);
+        setResult(res);
+    } catch (e) {
+        console.error("Backtest failed", e);
+        alert("回测失败，请检查网络或稍后再试");
+    } finally {
+        setIsRunning(false);
+    }
   };
 
   const formatMoney = (val: number) => {
@@ -187,13 +196,13 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ availableF
 
           <button
             onClick={handleRun}
-            disabled={portfolio.length === 0}
+            disabled={portfolio.length === 0 || isRunning}
             className={`w-full py-3 rounded-xl font-bold text-white flex items-center justify-center gap-2 transition shadow-lg ${
-              portfolio.length === 0 ? 'bg-slate-300 dark:bg-slate-700 cursor-not-allowed' : 'bg-gradient-to-r from-blue-600 to-indigo-600 active:scale-95'
+              portfolio.length === 0 || isRunning ? 'bg-slate-300 dark:bg-slate-700 cursor-not-allowed' : 'bg-gradient-to-r from-blue-600 to-indigo-600 active:scale-95'
             }`}
           >
-            <Play size={18} fill="currentColor" />
-            开始回测
+            {isRunning ? <Loader2 size={18} className="animate-spin"/> : <Play size={18} fill="currentColor" />}
+            {isRunning ? '正在回测历史数据...' : '开始回测'}
           </button>
         </div>
       </div>
@@ -241,7 +250,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ availableF
 
             {/* 图表 */}
             <div className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 h-64">
-               <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 mb-4">组合净值走势 (模拟数据)</h3>
+               <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 mb-4">组合净值走势 (基于历史真实净值)</h3>
                <ResponsiveContainer width="100%" height="100%">
                  <AreaChart data={result.chartData}>
                    <defs>
@@ -284,7 +293,7 @@ export const BacktestDashboard: React.FC<BacktestDashboardProps> = ({ availableF
             </div>
             
             <p className="text-[10px] text-slate-400 text-center pb-4">
-              注：数据基于历史净值模拟计算，未包含申购赎回费，历史业绩不代表未来表现。
+              注：数据基于历史净值回测，未包含申购赎回费，历史业绩不代表未来表现。
             </p>
         </div>
       )}

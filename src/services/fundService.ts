@@ -1,4 +1,4 @@
-import { Fund, SectorIndex } from '../types';
+import { Fund, SectorIndex, BacktestResult, BacktestPoint } from '../types';
 import { calculateFundMetrics } from '../utils/finance';
 
 // --- 配置后端地址 ---
@@ -325,19 +325,123 @@ export const getNavByDate = async (fundCode: string, dateStr: string): Promise<n
     }
 };
 
-// 回测逻辑
-export const runBacktest = (portfolio: { code: string, amount: number }[], durationYears: number) => {
-    const baseReturn = durationYears * 4; 
-    const volatility = Math.random() * 15;
-    const finalReturn = baseReturn + (Math.random() > 0.4 ? volatility : -volatility);
+// 回测逻辑 (Real Data Implementation)
+export const runBacktest = async (portfolio: { code: string, amount: number }[], durationYears: number): Promise<BacktestResult> => {
+    // 1. Determine Start Date
+    const today = new Date();
+    const startDate = new Date();
+    startDate.setFullYear(today.getFullYear() - durationYears);
+    const startDateStr = startDate.toISOString().split('T')[0];
+
+    // 2. Fetch History for all funds
+    const allHistoryProms = portfolio.map(async (p) => {
+        const history = await getFundHistoryData(p.code);
+        // Filter history within range
+        const filtered = history.filter((h: any) => h.date >= startDateStr).sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        return {
+            code: p.code,
+            amount: p.amount,
+            history: filtered
+        };
+    });
+
+    const fundsData = await Promise.all(allHistoryProms);
+
+    // 3. Normalize Data (Find common timeline)
+    // Create a map of Date -> Total Value
+    const dateValueMap: Map<string, number> = new Map();
+    const allDatesSet = new Set<string>();
+    
+    // To handle missing data (e.g. holidays differ for QDII), we need a continuous timeline or union of all dates
+    fundsData.forEach(fd => {
+        fd.history.forEach((h: any) => allDatesSet.add(h.date));
+    });
+    
+    const sortedDates = Array.from(allDatesSet).sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+
+    // Calculate Initial Shares for each fund at their first available date in range
+    // Note: If a fund started later than the backtest start date, we assume cash holds until fund starts? 
+    // Simplified: We assume buy-in at the first available data point for that fund within the period.
+    
+    const fundSharesMap: Map<string, number> = new Map();
+    const fundLastNavMap: Map<string, number> = new Map(); // For forward filling
+
+    // Calculate shares based on the first available NAV in the period
+    fundsData.forEach(fd => {
+        if (fd.history.length > 0) {
+            const firstNav = fd.history[0].value;
+            if (firstNav > 0) {
+                const shares = fd.amount / firstNav;
+                fundSharesMap.set(fd.code, shares);
+            }
+        }
+    });
+
+    const chartData: BacktestPoint[] = [];
+
+    // Iterate through time
+    for (const date of sortedDates) {
+        let dailyTotal = 0;
+        
+        fundsData.forEach(fd => {
+            // Find NAV for this date
+            const point = fd.history.find((h: any) => h.date === date);
+            
+            if (point) {
+                fundLastNavMap.set(fd.code, point.value);
+            }
+            
+            // Use current or last known NAV
+            const nav = point ? point.value : (fundLastNavMap.get(fd.code) || 0);
+            const shares = fundSharesMap.get(fd.code) || 0;
+            
+            dailyTotal += shares * nav;
+        });
+
+        // Only add data point if we have valid value (to skip initial gaps if any)
+        if (dailyTotal > 0) {
+            chartData.push({ date, value: dailyTotal });
+        }
+    }
+
+    if (chartData.length < 2) {
+        // Fallback or Error state
+        return {
+            totalReturn: 0,
+            annualizedReturn: 0,
+            maxDrawdown: 0,
+            finalValue: portfolio.reduce((sum, p) => sum + p.amount, 0),
+            chartData: []
+        };
+    }
+
+    // 4. Calculate Metrics
+    const startValue = chartData[0].value;
+    const finalValue = chartData[chartData.length - 1].value;
+    
+    const totalReturn = ((finalValue - startValue) / startValue) * 100;
+    
+    // Annualized: (1 + total_ret)^(1/years) - 1
+    // Use actual days difference for precision
+    const dayDiff = (new Date(sortedDates[sortedDates.length-1]).getTime() - new Date(sortedDates[0]).getTime()) / (1000 * 3600 * 24);
+    const exactYears = dayDiff / 365;
+    const annualizedReturn = (Math.pow(finalValue / startValue, 1 / (exactYears || 1)) - 1) * 100;
+
+    // Max Drawdown
+    let maxDD = 0;
+    let peak = -Infinity;
+    
+    chartData.forEach(p => {
+        if (p.value > peak) peak = p.value;
+        const dd = (peak - p.value) / peak;
+        if (dd > maxDD) maxDD = dd;
+    });
+
     return {
-        totalReturn: parseFloat(finalReturn.toFixed(2)),
-        annualizedReturn: parseFloat((finalReturn / durationYears).toFixed(2)),
-        maxDrawdown: parseFloat((Math.random() * 20 + 5).toFixed(2)),
-        finalValue: portfolio.reduce((sum, p) => sum + p.amount, 0) * (1 + finalReturn / 100),
-        chartData: Array.from({ length: 30 }, (_, i) => ({
-            date: `2023-${i + 1}`,
-            value: 10000 * (1 + (i * finalReturn / 3000))
-        }))
+        totalReturn: parseFloat(totalReturn.toFixed(2)),
+        annualizedReturn: parseFloat(annualizedReturn.toFixed(2)),
+        maxDrawdown: parseFloat((maxDD * 100).toFixed(2)),
+        finalValue: parseFloat(finalValue.toFixed(2)),
+        chartData
     };
 };

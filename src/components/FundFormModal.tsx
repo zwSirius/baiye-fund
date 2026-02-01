@@ -73,6 +73,10 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
   const handleSelect = async (fund: Fund, forceWatchlist: boolean = false) => {
     if (isSubmitting) return;
     setIsSubmitting(true);
+    
+    // Determine target mode
+    const targetIsWatchlist = isWatchlistMode || forceWatchlist;
+
     setIsLoadingDetails(true);
 
     try {
@@ -96,48 +100,69 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
              source = realData.source || "official";
         }
 
-        if (isWatchlistMode || forceWatchlist) {
+        const fundBase = {
+            ...fund,
+            name: finalName,
+            lastNav,
+            lastNavDate,
+            estimatedNav,
+            estimatedChangePercent,
+            source,
+            groupId: targetIsWatchlist ? 'watchlist' : selectedGroup,
+            holdingShares: 0,
+            holdingCost: 0,
+            realizedProfit: 0,
+            transactions: []
+        };
+
+        if (targetIsWatchlist) {
             const id = `${fund.code}_watchlist_${Date.now()}`;
             const newFund: Fund = {
-                ...fund,
+                ...fundBase,
                 id,
-                name: finalName,
-                lastNav,
-                lastNavDate,
-                estimatedNav,
-                estimatedChangePercent,
-                source,
-                groupId: 'watchlist',
-                holdingShares: 0,
-                holdingCost: 0,
-                realizedProfit: 0,
                 isWatchlist: true,
-                transactions: []
             };
             onSave(newFund);
+            setIsLoadingDetails(false);
+            setIsSubmitting(false);
             onClose();
             return;
         }
 
-        const updatedFund = {
-            ...fund,
-            name: finalName,
-            lastNav,
-            estimatedNav,
-            lastNavDate,
-            estimatedChangePercent,
-            source
-        };
-        setSelectedFund(updatedFund);
+        setSelectedFund(fundBase);
         setCost(lastNav > 0 ? lastNav.toString() : ''); 
         setStep('input');
     } catch (e) {
         console.error("Failed to fetch details", e);
-        if (isWatchlistMode || forceWatchlist) {
-             onSave({ ...fund, id: `${fund.code}_wl_${Date.now()}`, isWatchlist: true, holdingShares: 0 });
+        // Fallback for watchlist if API fails
+        if (targetIsWatchlist) {
+             onSave({ 
+                 ...fund, 
+                 id: `${fund.code}_wl_${Date.now()}`, 
+                 isWatchlist: true, 
+                 holdingShares: 0,
+                 estimatedNav: 0,
+                 lastNav: 0,
+                 estimatedChangePercent: 0,
+                 estimatedProfit: 0,
+                 holdingCost: 0,
+                 realizedProfit: 0,
+                 groupId: 'watchlist'
+             });
              onClose();
         } else {
-            setSelectedFund(fund);
+            // For holding mode, we still need to show input even if fetch fails
+            setSelectedFund({
+                ...fund,
+                estimatedNav: 0,
+                lastNav: 0,
+                estimatedChangePercent: 0,
+                estimatedProfit: 0,
+                holdingShares: 0,
+                holdingCost: 0,
+                realizedProfit: 0,
+                groupId: selectedGroup
+            });
             setStep('input');
         }
     } finally {

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI } from "@google/genai";
 import { ChatMessage } from '../types';
-import { Send, Bot, User, Loader2, Sparkles, Lock, Key } from 'lucide-react';
+import { Send, Bot, User, Loader2, Sparkles, Lock, Key, LogOut } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { getEffectiveApiKey } from '../services/geminiService';
 
@@ -24,12 +24,17 @@ export const AIChat: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-      // Check auth on mount
+  const checkAuth = () => {
       const key = getEffectiveApiKey();
       if (key) {
           setIsAuthorized(true);
+      } else {
+          setIsAuthorized(false);
       }
+  };
+
+  useEffect(() => {
+      checkAuth();
   }, []);
 
   const scrollToBottom = () => {
@@ -43,11 +48,27 @@ export const AIChat: React.FC = () => {
   const handleLogin = () => {
       if (username === 'baiye' && password === '1997') {
           localStorage.setItem('smartfund_vip_unlocked', 'true');
-          setIsAuthorized(true);
+          checkAuth();
           setLoginError('');
       } else {
           setLoginError('账号或密码错误');
       }
+  };
+
+  const handleLogout = () => {
+      localStorage.removeItem('smartfund_vip_unlocked');
+      // Note: We don't remove custom key here, as user might want to switch methods. 
+      // But to "Re-lock" effectively if custom key exists, we might need to clear that too or logic in getEffectiveApiKey handles priority.
+      // If custom key exists, getEffectiveApiKey returns it, so isAuthorized remains true.
+      // We will notify user.
+      if (localStorage.getItem('smartfund_custom_key')) {
+          if(confirm('检测到已配置自定义 API Key。是否同时也清除自定义 Key 以完全退出？')) {
+              localStorage.removeItem('smartfund_custom_key');
+          }
+      }
+      setIsAuthorized(false);
+      setUsername('');
+      setPassword('');
   };
 
   const handleSend = async () => {
@@ -120,14 +141,14 @@ export const AIChat: React.FC = () => {
                         placeholder="账号"
                         value={username}
                         onChange={e => setUsername(e.target.value)}
-                        className="w-full p-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                        className="w-full p-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
                       />
                       <input 
                         type="password" 
                         placeholder="密码"
                         value={password}
                         onChange={e => setPassword(e.target.value)}
-                        className="w-full p-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500"
+                        className="w-full p-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
                       />
                   </div>
 
@@ -157,8 +178,13 @@ export const AIChat: React.FC = () => {
                 <Sparkles className="text-indigo-500" size={20} />
                 <h2 className="font-bold text-slate-800 dark:text-white text-sm">AI 投资顾问</h2>
             </div>
-            <div className="text-[10px] text-green-500 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded-full flex items-center gap-1">
-                <Key size={10} /> 已连接
+            <div className="flex items-center gap-2">
+                <div className="text-[10px] text-green-500 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded-full flex items-center gap-1">
+                    <Key size={10} /> 已连接
+                </div>
+                <button onClick={handleLogout} className="text-slate-400 hover:text-red-500 transition" title="重新锁定">
+                    <LogOut size={16} />
+                </button>
             </div>
         </div>
 
