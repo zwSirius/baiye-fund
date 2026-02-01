@@ -2,7 +2,6 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import { FundProvider } from './contexts/FundContext';
-import './index.css'; // Optional: if you have global styles
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
