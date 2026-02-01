@@ -19,7 +19,7 @@ import { Watchlist } from './components/Watchlist';
 import { MarketConfigModal } from './components/MarketConfigModal';
 
 // Icons
-import { LayoutGrid, PieChart, Settings, Bot, Plus, Moon, Sun, Monitor, Download, Upload, Copy, PenTool, Eye, EyeOff, Key, Clipboard, ClipboardPaste, Users, X } from 'lucide-react';
+import { LayoutGrid, PieChart, Settings, Bot, Plus, Moon, Sun, Monitor, Download, Upload, Clipboard, ClipboardPaste, Users, X, Eye, EyeOff, PenTool } from 'lucide-react';
 
 const NavBtn = ({ icon, label, isActive, onClick }: any) => (
     <button onClick={onClick} className={`flex flex-col items-center w-14 pb-4 transition ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'}`}>
@@ -52,8 +52,7 @@ const App: React.FC = () => {
   const [isMarketConfigOpen, setIsMarketConfigOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   
-  // Settings & Import State
-  const [userApiKey, setUserApiKey] = useState('');
+  // Import State
   const [isImportTextOpen, setIsImportTextOpen] = useState(false);
   const [importTextContent, setImportTextContent] = useState('');
 
@@ -90,8 +89,6 @@ const App: React.FC = () => {
   }, [theme]);
 
   useEffect(() => {
-    const storedKey = localStorage.getItem('smartfund_user_gemini_key');
-    if (storedKey) setUserApiKey(storedKey);
     const storedPrivacy = localStorage.getItem('smartfund_privacy_mode');
     if (storedPrivacy === 'true') setIsPrivacyMode(true);
   }, []);
@@ -102,11 +99,6 @@ const App: React.FC = () => {
       const newVal = !isPrivacyMode;
       setIsPrivacyMode(newVal);
       localStorage.setItem('smartfund_privacy_mode', String(newVal));
-  };
-
-  const saveUserApiKey = (val: string) => {
-      setUserApiKey(val);
-      localStorage.setItem('smartfund_user_gemini_key', val);
   };
 
   // AI
@@ -275,7 +267,7 @@ const App: React.FC = () => {
 
         {activeTab === TabView.TOOLS && <ToolsDashboard funds={funds} />}
         {activeTab === TabView.BACKTEST && <BacktestDashboard availableFunds={funds} />}
-        {activeTab === TabView.AI_INSIGHTS && <AIChat apiKey={userApiKey} />}
+        {activeTab === TabView.AI_INSIGHTS && <AIChat />}
         
         {activeTab === TabView.SETTINGS && (
             <div className="p-6">
@@ -288,14 +280,6 @@ const App: React.FC = () => {
                             <button onClick={() => setTheme('system')} className={`p-1.5 rounded-md ${theme === 'system' ? 'bg-white shadow text-blue-600' : 'text-slate-400'}`}><Monitor size={16} /></button>
                             <button onClick={() => setTheme('dark')} className={`p-1.5 rounded-md ${theme === 'dark' ? 'bg-white shadow text-blue-600' : 'text-slate-400'}`}><Moon size={16} /></button>
                         </div>
-                    </div>
-                    
-                    <div className="p-4">
-                        <div className="flex items-center gap-2 mb-2">
-                            <Key size={16} className="text-blue-500"/>
-                            <span className="font-bold text-sm">Gemini API Key</span>
-                        </div>
-                        <input type="password" value={userApiKey} onChange={(e) => saveUserApiKey(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-800 border rounded-lg px-3 py-2 text-xs" placeholder="配置您的 Key" />
                     </div>
 
                     <div className="p-4">

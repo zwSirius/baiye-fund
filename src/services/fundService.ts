@@ -2,11 +2,9 @@ import { Fund, SectorIndex } from '../types';
 import { calculateFundMetrics } from '../utils/finance';
 
 // --- 配置后端地址 ---
-// 逻辑：
-// 1. 如果设置了 VITE_API_BASE (通常用于 Zeabur 生产环境指向 HF)，则使用该地址
-// 2. 否则，如果是开发环境，使用本地 localhost:7860
-// 3. 默认为空字符串 (用于前后端同源部署的情况)
-export const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.DEV ? 'http://127.0.0.1:7860' : '');
+// 1. 生产环境 (Zeabur): 请在 Zeabur 环境变量中设置 VITE_API_BASE 为后端服务的完整 URL (如 https://api.xxx.zeabur.app)
+// 2. 本地开发 (Dev): 默认为空字符串，请求会通过 Vite 代理转发到 http://127.0.0.1:7860
+export const API_BASE = import.meta.env.VITE_API_BASE || '';
 
 // --- Local Storage Keys ---
 const STORAGE_KEY_FUNDS = 'smartfund_funds_v1';
