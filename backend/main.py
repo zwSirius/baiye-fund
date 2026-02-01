@@ -1,5 +1,5 @@
 import uvicorn
-from fastapi import FastAPI, Query, Body, APIRouter
+from fastapi import FastAPI, Query, Body, APIRouter, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
 import akshare as ak
@@ -11,13 +11,19 @@ import logging
 import asyncio
 import random
 import time as time_module
-import os  # Added for environment variable access
+import os
+import google.generativeai as genai
 from datetime import datetime, timedelta, time
 from typing import List, Dict, Any, Optional
 
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("SmartFund")
+
+# Configure Gemini API (Server Side Key)
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 # --- Constants ---
 USER_AGENTS = [
@@ -369,6 +375,19 @@ class FundController:
 
         return [results_map[c] for c in codes]
 
+    @staticmethod
+    async def analyze_content(prompt: str):
+        if not GEMINI_API_KEY:
+            raise HTTPException(status_code=500, detail="Server Gemini Key not configured")
+        
+        try:
+            model = genai.GenerativeModel("gemini-1.5-flash") # Use stable model for backend
+            response = await run_in_threadpool(model.generate_content, prompt)
+            return {"text": response.text}
+        except Exception as e:
+            logger.error(f"Gemini Error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
 # --- FastAPI App ---
 
 app = FastAPI(title="SmartFund API", description="Optimized Backend")
@@ -430,6 +449,13 @@ async def history(code: str):
     df = await run_in_threadpool(AkshareService.fetch_fund_history_sync, code)
     if df.empty: return []
     return [{"date": str(r['净值日期']), "value": float(r['单位净值'])} for _, r in df.tail(365).iterrows()]
+
+@router.post("/analyze")
+async def analyze(payload: dict = Body(...)):
+    prompt = payload.get("prompt", "")
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt is required")
+    return await FundController.analyze_content(prompt)
 
 app.include_router(router)
 

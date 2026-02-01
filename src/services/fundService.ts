@@ -6,7 +6,7 @@ import { calculateFundMetrics } from '../utils/finance';
 // 1. 如果设置了 VITE_API_BASE (通常用于 Zeabur 生产环境指向 HF)，则使用该地址
 // 2. 否则，如果是开发环境，使用本地 localhost:7860
 // 3. 默认为空字符串 (用于前后端同源部署的情况)
-const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.DEV ? 'http://127.0.0.1:7860' : '');
+export const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.DEV ? 'http://127.0.0.1:7860' : '');
 
 // --- Local Storage Keys ---
 const STORAGE_KEY_FUNDS = 'smartfund_funds_v1';
