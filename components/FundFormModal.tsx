@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Fund, Group, Transaction } from '../types';
 import { searchFunds, fetchRealTimeEstimate } from '../services/fundService';
-import { X, Search, Loader2, Plus, Check, Users, DollarSign, PieChart, Eye } from 'lucide-react';
+import { X, Search, Loader2, Plus, Check, Users, DollarSign, PieChart, Eye, ArrowRight } from 'lucide-react';
 
 interface FundFormModalProps {
   isOpen: boolean;
@@ -72,14 +72,13 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
     return () => clearTimeout(timer);
   }, [query, step]);
 
-  const handleSelect = async (fund: Fund) => {
+  const handleSelect = async (fund: Fund, forceWatchlist: boolean = false) => {
     if (isSubmitting) return;
     setIsSubmitting(true);
     setIsLoadingDetails(true);
 
     try {
-        // 1. Fetch latest data (Nav, Estimate, Name)
-        // Optimization: Use fetchRealTimeEstimate to get the latest name and NAV immediately
+        // 1. Fetch latest data (Nav, Estimate, Name) immediately
         const realData = await fetchRealTimeEstimate(fund.code);
         
         let finalName = fund.name;
@@ -87,6 +86,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
         let estimatedNav = 0;
         let estimatedChangePercent = 0;
         let lastNavDate = "";
+        let source = "official";
 
         if (realData) {
              lastNav = parseFloat(realData.dwjz);
@@ -99,10 +99,11 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
              estimatedChangePercent = parseFloat(realData.gszzl || "0");
              if (realData.name) finalName = realData.name;
              lastNavDate = realData.jzrq;
+             source = realData.source || "official";
         }
 
-        // --- WATCHLIST LOGIC ---
-        if (isWatchlistMode) {
+        // --- WATCHLIST LOGIC (Either global mode OR forced by specific button) ---
+        if (isWatchlistMode || forceWatchlist) {
             const id = `${fund.code}_watchlist_${Date.now()}`;
             const newFund: Fund = {
                 ...fund,
@@ -112,6 +113,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
                 lastNavDate,
                 estimatedNav,
                 estimatedChangePercent,
+                source,
                 groupId: 'watchlist', // Virtual ID
                 holdingShares: 0,
                 holdingCost: 0,
@@ -131,7 +133,9 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
             name: finalName,
             lastNav,
             estimatedNav,
-            lastNavDate
+            lastNavDate,
+            estimatedChangePercent, // Keep the fetched change percent
+            source
         };
         
         setSelectedFund(updatedFund);
@@ -141,8 +145,8 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
 
     } catch (e) {
         console.error("Failed to fetch details", e);
-        // Fallback if fetch fails
-        if (isWatchlistMode) {
+        // Fallback
+        if (isWatchlistMode || forceWatchlist) {
              onSave({ ...fund, id: `${fund.code}_wl_${Date.now()}`, isWatchlist: true, holdingShares: 0 });
              onClose();
         } else {
@@ -165,7 +169,6 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
     const holdingShares = parseFloat(shares) || 0;
     const holdingCost = parseFloat(cost) || 0;
 
-    // Generate initial transaction record if new
     let transactions = initialFund?.transactions || [];
     if (!initialFund && holdingShares > 0) {
         const initialTx: Transaction = {
@@ -242,18 +245,37 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
                 {searchResults.map(fund => (
                   <div 
                     key={fund.id} 
-                    onClick={() => handleSelect(fund)}
-                    className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm flex justify-between items-center active:scale-[0.98] transition cursor-pointer hover:border-blue-400"
+                    className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm flex justify-between items-center transition hover:border-blue-400"
                   >
-                    <div>
+                    <div 
+                        className="flex-1 cursor-pointer"
+                        onClick={() => handleSelect(fund, false)} // Default behavior
+                    >
                       <div className="font-bold text-slate-800 dark:text-slate-100">{fund.name}</div>
                       <div className="text-xs text-slate-400 mt-1 flex gap-2">
                         <span className="bg-slate-100 dark:bg-slate-800 px-1 rounded font-mono">{fund.code}</span>
                         <span>{fund.tags.join(' ')}</span>
                       </div>
                     </div>
-                    <div className={`p-2 rounded-full ${isWatchlistMode ? 'bg-blue-50 text-blue-500' : 'bg-slate-100 text-slate-400'}`}>
-                        {isWatchlistMode ? <Eye size={20} /> : <Plus size={20} />}
+                    
+                    <div className="flex items-center gap-2">
+                         {/* Explicit Add to Watchlist Button */}
+                         {!isWatchlistMode && (
+                             <button 
+                                onClick={(e) => { e.stopPropagation(); handleSelect(fund, true); }}
+                                className="p-2 rounded-full bg-slate-50 dark:bg-slate-800 text-slate-400 hover:text-blue-500 hover:bg-blue-50 transition"
+                                title="加入自选"
+                             >
+                                 <Eye size={18} />
+                             </button>
+                         )}
+
+                         <button 
+                             onClick={() => handleSelect(fund, false)}
+                             className={`p-2 rounded-full ${isWatchlistMode ? 'bg-blue-50 text-blue-500' : 'bg-blue-600 text-white shadow-md'}`}
+                         >
+                             {isWatchlistMode ? <Plus size={20} /> : <ArrowRight size={18} />}
+                         </button>
                     </div>
                   </div>
                 ))}
@@ -269,9 +291,14 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
                 <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-blue-100 dark:border-blue-900 shadow-sm">
                    <div className="text-sm text-slate-500 dark:text-slate-400 mb-1">当前基金</div>
                    <div className="font-bold text-lg text-slate-800 dark:text-slate-100">{selectedFund.name}</div>
-                   <div className="text-xs text-blue-500 font-mono mt-0.5">{selectedFund.code}</div>
-                   <div className="text-xs text-slate-400 mt-2 bg-slate-50 dark:bg-slate-800 inline-block px-2 py-1 rounded">
-                       最新净值: <span className="text-slate-700 dark:text-slate-300 font-bold">{selectedFund.lastNav}</span> ({selectedFund.lastNavDate})
+                   <div className="flex justify-between items-end mt-2">
+                       <div className="text-xs text-blue-500 font-mono bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded">{selectedFund.code}</div>
+                       <div className="text-right">
+                           <div className="text-[10px] text-slate-400">实时估值</div>
+                           <div className={`font-bold ${selectedFund.estimatedChangePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
+                               {selectedFund.estimatedChangePercent > 0 ? '+' : ''}{selectedFund.estimatedChangePercent}%
+                           </div>
+                       </div>
                    </div>
                 </div>
 

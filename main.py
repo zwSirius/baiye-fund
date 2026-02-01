@@ -99,28 +99,76 @@ def _fetch_official_estimate_sync(code: str):
     except: pass
     return data
 
+def _parse_quarter_str(q_str):
+    """Helper to parse '2023年4季度' into comparable int 20234"""
+    try:
+        # Expected format: YYYY年N季度
+        if '年' in q_str and '季度' in q_str:
+            parts = q_str.split('年')
+            year = int(parts[0])
+            quarter = int(parts[1].replace('季度', ''))
+            return year * 10 + quarter
+    except:
+        pass
+    return 0
+
 def _fetch_holdings_sync(code: str):
+    """
+    Robust fetching of latest holdings.
+    Iterates recent years, merges data, sorts by Quarter to find the absolute latest.
+    """
     try:
         current_year = datetime.now().year
+        all_dfs = []
+        
+        # Try fetching this year and last year to ensure we get the latest report
         for year in [current_year, current_year - 1]:
             try:
                 df = ak.fund_portfolio_hold_em(symbol=code, date=year)
                 if not df.empty and '季度' in df.columns:
-                    latest_q = df['季度'].unique()[0]
-                    latest_df = df[df['季度'] == latest_q]
-                    latest_df['占净值比例'] = pd.to_numeric(latest_df['占净值比例'], errors='coerce').fillna(0)
-                    latest_df = latest_df.sort_values(by='占净值比例', ascending=False).head(10)
-                    holdings = []
-                    for _, row in latest_df.iterrows():
-                        holdings.append({
-                            "code": str(row['股票代码']),
-                            "name": str(row['股票名称']),
-                            "percent": float(row['占净值比例'])
-                        })
-                    return holdings
-            except: continue
-    except: pass
-    return []
+                    all_dfs.append(df)
+            except: 
+                continue
+        
+        if not all_dfs:
+            return []
+
+        # Combine all found dataframes
+        combined_df = pd.concat(all_dfs)
+        
+        if combined_df.empty:
+            return []
+
+        # Get unique quarters and sort them properly
+        unique_quarters = combined_df['季度'].unique()
+        # Sort quarters descending based on parsed value (e.g. 20241 > 20234)
+        sorted_quarters = sorted(unique_quarters, key=_parse_quarter_str, reverse=True)
+        
+        if not sorted_quarters:
+            return []
+            
+        latest_q = sorted_quarters[0] # The most recent quarter string
+        
+        # Filter for the latest quarter
+        latest_df = combined_df[combined_df['季度'] == latest_q].copy()
+        
+        # Process holdings
+        latest_df['占净值比例'] = pd.to_numeric(latest_df['占净值比例'], errors='coerce').fillna(0)
+        # Sort by percentage to get top holdings
+        latest_df = latest_df.sort_values(by='占净值比例', ascending=False).head(10)
+        
+        holdings = []
+        for _, row in latest_df.iterrows():
+            holdings.append({
+                "code": str(row['股票代码']),
+                "name": str(row['股票名称']),
+                "percent": float(row['占净值比例'])
+            })
+            
+        return holdings
+    except Exception as e:
+        logger.error(f"Error fetching holdings for {code}: {e}")
+        return []
 
 def _fetch_stock_quotes_sync(stock_codes: list):
     """Batch fetch stock quotes (IO Bound but fast)"""
