@@ -2,6 +2,7 @@
 interface ImportMetaEnv {
   [key: string]: any;
   readonly API_KEY: string;
+  readonly VITE_API_BASE: string; // Add this line
   BASE_URL: string;
   MODE: string;
   DEV: boolean;

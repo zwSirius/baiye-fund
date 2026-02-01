@@ -2,43 +2,59 @@ import { Fund, SectorIndex } from '../types';
 import { calculateFundMetrics } from '../utils/finance';
 
 // --- 配置后端地址 ---
-let isProd = false;
-try {
-    // @ts-ignore
-    isProd = typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.PROD;
-} catch (e) {
-    isProd = false;
-}
-
-const API_BASE = isProd ? '' : 'http://127.0.0.1:7860';
+// 逻辑：
+// 1. 如果设置了 VITE_API_BASE (通常用于 Zeabur 生产环境指向 HF)，则使用该地址
+// 2. 否则，如果是开发环境，使用本地 localhost:7860
+// 3. 默认为空字符串 (用于前后端同源部署的情况)
+const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.DEV ? 'http://127.0.0.1:7860' : '');
 
 // --- Local Storage Keys ---
 const STORAGE_KEY_FUNDS = 'smartfund_funds_v1';
 const STORAGE_KEY_GROUPS = 'smartfund_groups_v1';
 const STORAGE_KEY_MARKET_CONFIG = 'smartfund_market_config_v1';
 
-// --- Storage Utils ---
+// --- Storage & Data Management ---
 
-export const saveFundsToLocal = (funds: Fund[]) => localStorage.setItem(STORAGE_KEY_FUNDS, JSON.stringify(funds));
-export const saveGroupsToLocal = (groups: any[]) => localStorage.setItem(STORAGE_KEY_GROUPS, JSON.stringify(groups));
-export const saveMarketCodes = (codes: string[]) => localStorage.setItem(STORAGE_KEY_MARKET_CONFIG, JSON.stringify(codes));
+export const saveFundsToLocal = (funds: Fund[]) => {
+    localStorage.setItem(STORAGE_KEY_FUNDS, JSON.stringify(funds));
+};
+
+export const saveGroupsToLocal = (groups: any[]) => {
+    localStorage.setItem(STORAGE_KEY_GROUPS, JSON.stringify(groups));
+};
 
 export const getStoredGroups = () => {
     const stored = localStorage.getItem(STORAGE_KEY_GROUPS);
-    return stored ? JSON.parse(stored) : [{ id: 'default', name: '我的账户', isDefault: true }];
+    if (stored) {
+        return JSON.parse(stored);
+    }
+    // 修改：默认只有我的账户
+    return [
+        { id: 'default', name: '我的账户', isDefault: true }
+    ];
 };
 
 export const getInitialFunds = (): Fund[] => {
-    const stored = localStorage.getItem(STORAGE_KEY_FUNDS);
-    return stored ? JSON.parse(stored) : [];
+  const stored = localStorage.getItem(STORAGE_KEY_FUNDS);
+  if (stored) {
+      return JSON.parse(stored) as Fund[];
+  }
+  return [];
 };
 
+// 市场板块配置存储
 export const getStoredMarketCodes = (): string[] => {
     const stored = localStorage.getItem(STORAGE_KEY_MARKET_CONFIG);
-    return stored ? JSON.parse(stored) : ["1.000001", "0.399001", "0.399006", "0.399997", "0.399976"];
+    if (stored) {
+        return JSON.parse(stored);
+    }
+    // 默认显示：上证、深证、创业板、白酒、新能源
+    return ["1.000001", "0.399001", "0.399006", "0.399997", "0.399976"];
 };
 
-// --- Import/Export ---
+export const saveMarketCodes = (codes: string[]) => {
+    localStorage.setItem(STORAGE_KEY_MARKET_CONFIG, JSON.stringify(codes));
+};
 
 export const exportData = () => {
     const data = {
@@ -67,73 +83,82 @@ export const importData = (jsonString: string): boolean => {
     }
 };
 
-// --- API Interactions ---
+// --- API 接口 ---
 
-// 1. Search
+// 1. 搜索基金
 export const searchFunds = async (query: string): Promise<Fund[]> => {
-    if (!query) return [];
-    try {
-        const response = await fetch(`${API_BASE}/api/search?key=${encodeURIComponent(query)}`);
-        const data = await response.json();
-        if (Array.isArray(data)) {
-            return data.map((item: any) => ({
-                id: `temp_${item.code}`,
-                code: item.code,
-                name: item.name,
-                manager: "暂无",
-                lastNav: 0,
-                lastNavDate: "",
-                holdings: [],
-                tags: [item.type && item.type.trim() !== "" ? item.type : "混合型"],
-                estimatedNav: 0,
-                estimatedChangePercent: 0,
-                estimatedProfit: 0,
-                groupId: '',
-                holdingShares: 0,
-                holdingCost: 0,
-                realizedProfit: 0,
-                transactions: [],
-                isWatchlist: false
-            }));
-        }
-        return [];
-    } catch (error) {
-        console.warn("Search failed:", error);
-        return [];
+  if (!query) return [];
+  try {
+    const response = await fetch(`${API_BASE}/api/search?key=${encodeURIComponent(query)}`);
+    const data = await response.json();
+    
+    if (Array.isArray(data)) {
+        return data.map((item: any) => ({
+            id: `temp_${item.code}`,
+            code: item.code,
+            name: item.name,
+            manager: "暂无",
+            lastNav: 0,
+            lastNavDate: "",
+            holdings: [],
+            // Ensure type is present, fallback to "混合型" if empty
+            tags: [item.type && item.type.trim() !== "" ? item.type : "混合型"], 
+            estimatedNav: 0,
+            estimatedChangePercent: 0,
+            estimatedProfit: 0,
+            groupId: '',
+            holdingShares: 0,
+            holdingCost: 0,
+            realizedProfit: 0,
+            transactions: [],
+            isWatchlist: false
+        }));
     }
+    return [];
+  } catch (error) {
+    console.warn("Search failed (Backend might be offline):", error);
+    return [];
+  }
 };
 
-// 2. Fetch Single Estimate
+// 2. 获取实时估值 (单个) - 兼容旧逻辑
 export const fetchRealTimeEstimate = async (fundCode: string) => {
     try {
         const response = await fetch(`${API_BASE}/api/estimate/${fundCode}`);
-        return response.ok ? await response.json() : null;
+        if (!response.ok) return null;
+        return await response.json();
     } catch (error) {
+        // console.warn("Estimate request failed:", error);
         return null;
     }
 };
 
-// 3. Batch Estimates
+// 2.1 批量获取实时估值 (优化版)
 export const fetchBatchEstimates = async (fundCodes: string[]) => {
     try {
         const response = await fetch(`${API_BASE}/api/estimate/batch`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json'
+            },
             body: JSON.stringify({ codes: fundCodes })
         });
-        return response.ok ? await response.json() : [];
+        if (!response.ok) return [];
+        return await response.json();
     } catch (error) {
         console.warn("Batch estimate failed:", error);
         return [];
     }
-};
+}
 
-// 4. Fund Details
+// 3. 获取基金详情
 export const fetchFundDetails = async (fund: Fund): Promise<Fund> => {
     try {
         const response = await fetch(`${API_BASE}/api/fund/${fund.code}`);
-        if (!response.ok) return fund;
+        if (!response.ok) throw new Error("Backend detail fetch failed");
+        
         const data = await response.json();
+        
         return {
             ...fund,
             manager: data.manager || fund.manager,
@@ -145,94 +170,110 @@ export const fetchFundDetails = async (fund: Fund): Promise<Fund> => {
                 changePercent: parseFloat(h.changePercent || 0)
             })) : fund.holdings
         };
-    } catch {
+    } catch (error) {
+        console.warn(`Detail fetch failed for ${fund.code}. Backend down?`, error);
         return fund;
     }
 };
 
-// 5. History
+// 4. 获取历史净值
 export const getFundHistoryData = async (fundCode: string) => {
     try {
         const response = await fetch(`${API_BASE}/api/history/${fundCode}`);
         if (!response.ok) return [];
+        
         const data = await response.json();
-        return Array.isArray(data) ? data.map((item: any) => ({ date: item.date, value: parseFloat(item.value) })) : [];
-    } catch {
+        if (Array.isArray(data)) {
+            return data.map((item: any) => ({
+                date: item.date,
+                value: parseFloat(item.value),
+                change: 0 
+            }));
+        }
+        return [];
+    } catch (error) {
+        console.warn(`History fetch failed for ${fundCode}`, error);
         return [];
     }
 };
 
-// 6. Market Indices
+// 5. 获取市场指数 (支持自定义代码)
 export const fetchMarketIndices = async (codes?: string[]): Promise<SectorIndex[]> => {
     try {
+        // 如果没有传入 codes，使用本地存储的配置
         const targetCodes = codes || getStoredMarketCodes();
-        const response = await fetch(`${API_BASE}/api/market?codes=${targetCodes.join(',')}`);
-        return response.ok ? await response.json() : [];
+        const param = targetCodes.join(',');
+        
+        const response = await fetch(`${API_BASE}/api/market?codes=${param}`);
+        if (!response.ok) throw new Error("Market fetch failed");
+        const data = await response.json();
+        return data;
     } catch (e) {
-        console.warn("Market fetch failed:", e);
+        console.warn("Market indices fetch failed (using mock data):", e);
         return [];
     }
 };
 
-// 7. Batch Update Fund Estimates (The Core Logic)
+// 6. 批量更新 (优化：使用 Batch API)
 export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]> => {
     if (currentFunds.length === 0) return [];
 
+    // 提取所有 Code
     const codes = Array.from(new Set(currentFunds.map(f => f.code)));
+    
+    // 调用批量接口
     let estimatesMap: Record<string, any> = {};
-
     try {
         const estimates = await fetchBatchEstimates(codes);
-        estimates.forEach((item: any) => estimatesMap[item.fundcode] = item);
+        estimates.forEach((item: any) => {
+            estimatesMap[item.fundcode] = item;
+        });
     } catch (e) {
-        console.error("Update failed", e);
+        console.error("Batch update failed, falling back to original data", e);
         return currentFunds;
     }
 
+    // 映射结果
     return currentFunds.map(fund => {
         const realData = estimatesMap[fund.code];
-        if (!realData) return fund;
+        
+        if (!realData) return fund; // 如果该基金数据缺失，保持原状
 
-        let { 
-            dwjz: apiDwjzStr, 
-            gsz: apiGszStr, 
-            gszzl: apiGszzlStr, 
-            jzrq: apiJzrq, 
-            name: apiName, 
-            source: apiSource 
-        } = realData;
-
-        const apiDwjz = parseFloat(apiDwjzStr);
-        const apiGsz = parseFloat(apiGszStr);
-        const apiGszzl = parseFloat(apiGszzlStr || "0");
-
+        let estimatedNav = fund.lastNav;
+        let estimatedChangePercent = 0;
+        let name = fund.name;
         let lastNav = fund.lastNav;
         let lastNavDate = fund.lastNavDate;
-        let estimatedNav = fund.estimatedNav;
-        let estimatedChangePercent = 0;
-        let name = apiName && apiName.length > 0 ? apiName : fund.name;
-        let source = apiSource || fund.source;
+        let source = fund.source;
 
-        // Update Last NAV (DWJZ)
+        const apiDwjz = parseFloat(realData.dwjz);
+        const apiGsz = parseFloat(realData.gsz);
+
+        // 更新单位净值 (逻辑同之前，确保不为0)
         if (!isNaN(apiDwjz) && apiDwjz > 0) {
             lastNav = apiDwjz;
-            lastNavDate = apiJzrq;
+            lastNavDate = realData.jzrq;
         } else if (lastNav === 0) {
             lastNav = !isNaN(apiGsz) ? apiGsz : 1.0;
         }
 
-        // Update Estimated NAV (GSZ)
+        // 更新估值和涨跌幅
         if (!isNaN(apiGsz) && apiGsz > 0) {
             estimatedNav = apiGsz;
-            estimatedChangePercent = apiGszzl;
+            estimatedChangePercent = parseFloat(realData.gszzl || "0");
+            source = realData.source;
         } else if (!isNaN(apiDwjz) && apiDwjz > 0) {
             estimatedNav = apiDwjz;
             estimatedChangePercent = 0;
         } else {
-            estimatedNav = fund.estimatedNav > 0 ? fund.estimatedNav : 1.0;
+             estimatedNav = fund.estimatedNav > 0 ? fund.estimatedNav : 1.0;
         }
 
-        // Calculate Profit using centralized utility
+        if (realData.name && realData.name.length > 0) {
+            name = realData.name;
+        }
+
+        // --- 核心修复：当日盈亏计算逻辑 ---
         const profitToday = calculateFundMetrics(
             fund.holdingShares,
             lastNav,
@@ -253,29 +294,40 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
     });
 };
 
-// 8. Get NAV by date (Fallback logic)
+// 辅助：获取某个日期的净值 (修复版：从历史接口查找)
 export const getNavByDate = async (fundCode: string, dateStr: string): Promise<number> => {
     try {
+        // 获取历史数据
         const history = await getFundHistoryData(fundCode);
+        
+        // 查找精确匹配
         const exactMatch = history.find((h: any) => h.date === dateStr);
         if (exactMatch) return exactMatch.value;
 
-        // Find nearest previous date
+        // 如果没有精确匹配，查找最近的一个之前的日期
         const targetDate = new Date(dateStr).getTime();
-        const sorted = [...history].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        for (const h of sorted) {
-            if (new Date(h.date).getTime() <= targetDate) return h.value;
+        const sortedHistory = [...history].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        
+        for (const h of sortedHistory) {
+            if (new Date(h.date).getTime() <= targetDate) {
+                return h.value;
+            }
         }
         
-        // Fallback to real-time
-        const real = await fetchRealTimeEstimate(fundCode);
-        return (real && parseFloat(real.dwjz) > 0) ? parseFloat(real.dwjz) : 1.0;
-    } catch {
+        // 如果都找不到，尝试获取实时估值作为兜底
+        const realData = await fetchRealTimeEstimate(fundCode);
+        if (realData && realData.dwjz && parseFloat(realData.dwjz) > 0) {
+            return parseFloat(realData.dwjz);
+        }
+
+        return 1.0;
+    } catch (e) {
+        console.warn("Failed to get nav by date", e);
         return 1.0;
     }
 };
 
-// 9. Simple Backtest Mock
+// 回测逻辑
 export const runBacktest = (portfolio: { code: string, amount: number }[], durationYears: number) => {
     const baseReturn = durationYears * 4; 
     const volatility = Math.random() * 15;
