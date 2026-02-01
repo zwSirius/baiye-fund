@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Fund, Group } from '../types';
-import { RefreshCw, LayoutDashboard, ChevronRight, Zap, Clock, Moon, Coffee } from 'lucide-react';
+import { RefreshCw, LayoutDashboard, ChevronRight, Zap, Clock, Moon, Coffee, Plus } from 'lucide-react';
 
 interface DashboardProps {
   funds: Fund[];
@@ -145,7 +145,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
          {/* 调整位置：汇总在第一个 */}
          <button 
              onClick={handleSummaryClick}
-             className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1 ${
+             className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1 flex-shrink-0 ${
                  isSummary
                  ? 'bg-indigo-600 text-white shadow-md border border-indigo-600'
                  : 'bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-800'
@@ -156,7 +156,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
          <button 
              onClick={() => handleGroupTabClick('all')}
-             className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition ${
+             className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition flex-shrink-0 ${
                  currentGroupId === 'all' && !isSummary
                  ? 'bg-slate-800 text-white shadow-md dark:bg-white dark:text-slate-900' 
                  : 'bg-white text-slate-500 border border-slate-200 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400'
@@ -169,7 +169,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
              <button
                  key={g.id}
                  onClick={() => handleGroupTabClick(g.id)}
-                 className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition ${
+                 className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition flex-shrink-0 ${
                      currentGroupId === g.id && !isSummary
                      ? 'bg-blue-600 text-white shadow-md'
                      : 'bg-white text-slate-500 border border-slate-200 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400'
@@ -178,6 +178,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
                  {g.name}
              </button>
          ))}
+
+         <button
+            onClick={onManageGroups}
+            className="whitespace-nowrap px-2.5 py-1.5 rounded-full text-xs font-bold bg-slate-100 text-slate-400 border border-transparent dark:bg-slate-800 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700 transition flex items-center gap-1 flex-shrink-0"
+            title="管理分组"
+         >
+            <Plus size={14} />
+         </button>
       </div>
 
       {/* Asset Card - Compact for Mobile */}
