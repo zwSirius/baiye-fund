@@ -381,7 +381,8 @@ class FundController:
             raise HTTPException(status_code=500, detail="Server Gemini Key not configured")
         
         try:
-            model = genai.GenerativeModel("gemini-1.5-flash") # Use stable model for backend
+            # Use preview model for better performance/compliance
+            model = genai.GenerativeModel("gemini-3-flash-preview") 
             response = await run_in_threadpool(model.generate_content, prompt)
             return {"text": response.text}
         except Exception as e:
@@ -413,7 +414,15 @@ async def search(key: str = Query(..., min_length=1)):
 @router.get("/market")
 async def market(codes: str = Query(None)):
     target_codes = codes.split(',') if codes else ["1.000001", "0.399001"]
-    secids = [f"1.{c}" if c.startswith('1') else f"0.{c}" for c in target_codes] 
+    
+    # FIX: Check if code is already formatted (contains dot) to prevent double prefixing
+    def format_secid(c):
+        if '.' in c: return c 
+        if c.startswith('6') or c.startswith('1') or c.startswith('5'): return f"1.{c}"
+        return f"0.{c}"
+
+    secids = [format_secid(c) for c in target_codes] 
+    
     url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f3,f12,f14,f2&secids={','.join(secids)}"
     try:
         resp = await run_in_threadpool(lambda: requests.get(url, headers=AkshareService.get_headers(), timeout=3))
