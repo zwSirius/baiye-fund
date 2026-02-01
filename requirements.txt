@@ -1,3 +1,0 @@
-# 请删除此文件。
-# 依赖列表已移动至 backend/requirements.txt。
-# Please delete this file. Dependencies moved to backend/requirements.txt.
