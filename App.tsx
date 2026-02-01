@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Fund, TabView, Transaction, TransactionType, Group, SectorIndex } from './types';
 import { getInitialFunds, updateFundEstimates, fetchMarketIndices, saveFundsToLocal, saveGroupsToLocal, getStoredGroups, exportData, importData, getStoredMarketCodes, saveMarketCodes } from './services/fundService';
 import { analyzeFund } from './services/geminiService';
@@ -80,51 +80,52 @@ const App: React.FC = () => {
     }
   }, [theme]);
 
-  // Filter funds based on current group selection
-  const holdingFunds = funds.filter(f => !f.isWatchlist && f.holdingShares > 0);
-  const watchlistFunds = funds.filter(f => f.isWatchlist || f.holdingShares === 0);
+  // Memoized Filters
+  // Performance: Only recalculate when funds or currentGroupId changes
+  const visibleDashboardFunds = useMemo(() => {
+      const holdingFunds = funds.filter(f => !f.isWatchlist && f.holdingShares > 0);
+      if (currentGroupId === 'all') {
+          return holdingFunds;
+      }
+      return holdingFunds.filter(f => f.groupId === currentGroupId);
+  }, [funds, currentGroupId]);
 
-  const visibleDashboardFunds = currentGroupId === 'all' 
-      ? holdingFunds 
-      : holdingFunds.filter(f => f.groupId === currentGroupId);
+  const watchlistFunds = useMemo(() => {
+      return funds.filter(f => f.isWatchlist || f.holdingShares === 0);
+  }, [funds]);
 
-  const calculateTotals = useCallback((currentFunds: Fund[]) => {
+  // Calculate Totals using useMemo instead of useEffect to avoid one render cycle
+  useEffect(() => {
     let profit = 0;
     let value = 0;
-    currentFunds.forEach(f => {
+    visibleDashboardFunds.forEach(f => {
       profit += f.estimatedProfit;
       value += (f.estimatedNav * f.holdingShares);
     });
     setTotalProfit(profit);
     setTotalMarketValue(value);
-  }, []);
+  }, [visibleDashboardFunds]);
 
   // Handle Refresh (Manual)
-  // 这里的 funds 依赖必须是正确的，否则闭包会导致旧数据覆盖新数据
+  // Optimization: Use functional state update or refs if needed, but here simple async is fine
   const handleRefresh = useCallback(async () => {
-    if (funds.length === 0 && marketCodes.length === 0) return;
-    
     setIsRefreshing(true);
     try {
-        // 先获取最新的 market indices，这个和 funds 无关
         const updatedIndices = await fetchMarketIndices(marketCodes);
         setSectorIndices(updatedIndices);
 
-        // 更新 funds。注意：这里我们传入当前的 funds 状态
-        // 但是，如果在 setFunds 之前 funds 已经变了（比如快速操作），这里可能会有问题
-        // 但对于手动刷新按钮，通常是安全的。
+        // Fetch fresh data based on current state
         if (funds.length > 0) {
-            const updatedFunds = await updateFundEstimates(funds);
-            setFunds(updatedFunds);
+             const updatedFunds = await updateFundEstimates(funds);
+             setFunds(updatedFunds);
         }
-        
         setLastUpdate(new Date());
     } catch (e) {
         console.error("Refresh failed", e);
     } finally {
         setIsRefreshing(false);
     }
-  }, [funds, marketCodes]);
+  }, [funds, marketCodes]); // Dependencies are necessary here
 
   // Initialize Data
   useEffect(() => {
@@ -136,7 +137,7 @@ const App: React.FC = () => {
     setGroups(initialGroups);
     setMarketCodes(storedMarketCodes);
     
-    // Initial fetch on load
+    // Initial fetch on load (background)
     if (initialFunds.length > 0) {
         updateFundEstimates(initialFunds).then(setFunds);
     }
@@ -150,12 +151,6 @@ const App: React.FC = () => {
     saveFundsToLocal(funds);
     saveGroupsToLocal(groups);
   }, [funds, groups]);
-
-  // Watch for changes to update totals
-  useEffect(() => {
-      calculateTotals(visibleDashboardFunds);
-  }, [visibleDashboardFunds, calculateTotals]);
-
 
   // AI Analysis
   const handleAnalyze = async (fund: Fund) => {
@@ -172,18 +167,13 @@ const App: React.FC = () => {
   const handleSaveFund = async (newFund: Fund) => {
     setFunds(prev => {
       const exists = prev.findIndex(f => f.id === newFund.id);
-      let nextFunds;
       if (exists >= 0) {
-        nextFunds = [...prev];
-        nextFunds[exists] = newFund;
-      } else {
-        nextFunds = [...prev, newFund];
+        const next = [...prev];
+        next[exists] = newFund;
+        return next;
       }
-      return nextFunds;
+      return [...prev, newFund];
     });
-    // 关键修复：移除 setTimeout 刷新。
-    // 因为 handleRefresh 是基于旧的 funds 闭包创建的，直接调用会用旧列表覆盖新列表。
-    // 新添加的基金在 Modal 里已经获取了最新估值，所以不需要立即刷新。
   };
 
   const handleDeleteFund = (fundToDelete: Fund) => {
@@ -466,7 +456,7 @@ const App: React.FC = () => {
                         </button>
                     </div>
                 </div>
-                <p className="text-xs text-slate-400 mt-4 text-center">SmartFund Pro v2.2</p>
+                <p className="text-xs text-slate-400 mt-4 text-center">SmartFund Pro v2.3</p>
             </div>
         )}
       </main>

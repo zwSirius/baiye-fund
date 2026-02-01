@@ -28,9 +28,14 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
   
   // Loading details
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Reset state when opening
   useEffect(() => {
     if (isOpen) {
+      setIsSubmitting(false);
+      setIsLoadingDetails(false);
+      
       if (initialFund) {
         setStep('input');
         setSelectedFund(initialFund);
@@ -51,6 +56,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
     }
   }, [isOpen, initialFund, currentGroupId, groups]);
 
+  // Debounce search
   useEffect(() => {
     if (step !== 'search') return;
     const timer = setTimeout(async () => {
@@ -67,65 +73,86 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
   }, [query, step]);
 
   const handleSelect = async (fund: Fund) => {
-    // 强制检查：自选模式下，直接保存并退出
-    if (isWatchlistMode === true) {
-        setIsLoadingDetails(true);
-        // 尝试获取最新数据，确保列表显示不为0
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    setIsLoadingDetails(true);
+
+    try {
+        // 1. Fetch latest data (Nav, Estimate, Name)
+        // Optimization: Use fetchRealTimeEstimate to get the latest name and NAV immediately
         const realData = await fetchRealTimeEstimate(fund.code);
-        const id = `${fund.code}_watchlist_${Date.now()}`;
         
+        let finalName = fund.name;
+        let lastNav = 0;
         let estimatedNav = 0;
         let estimatedChangePercent = 0;
-        let lastNav = 0;
-        let finalName = fund.name;
+        let lastNavDate = "";
 
         if (realData) {
              lastNav = parseFloat(realData.dwjz);
+             // If dwjz is 0 or invalid, fallback to 1.0 safely
+             if (isNaN(lastNav) || lastNav <= 0) lastNav = 1.0;
+
              estimatedNav = parseFloat(realData.gsz || realData.dwjz);
+             if (isNaN(estimatedNav) || estimatedNav <= 0) estimatedNav = lastNav;
+             
              estimatedChangePercent = parseFloat(realData.gszzl || "0");
              if (realData.name) finalName = realData.name;
+             lastNavDate = realData.jzrq;
         }
 
-        const newFund: Fund = {
+        // --- WATCHLIST LOGIC ---
+        if (isWatchlistMode) {
+            const id = `${fund.code}_watchlist_${Date.now()}`;
+            const newFund: Fund = {
+                ...fund,
+                id,
+                name: finalName,
+                lastNav,
+                lastNavDate,
+                estimatedNav,
+                estimatedChangePercent,
+                groupId: 'watchlist', // Virtual ID
+                holdingShares: 0,
+                holdingCost: 0,
+                realizedProfit: 0,
+                isWatchlist: true,
+                transactions: []
+            };
+            
+            onSave(newFund);
+            onClose();
+            return; // STRICT RETURN: Do not proceed to input step
+        }
+
+        // --- PORTFOLIO LOGIC ---
+        const updatedFund = {
             ...fund,
-            id,
             name: finalName,
             lastNav,
             estimatedNav,
-            estimatedChangePercent,
-            groupId: 'watchlist', // 虚拟组
-            holdingShares: 0,
-            holdingCost: 0,
-            realizedProfit: 0,
-            isWatchlist: true
+            lastNavDate
         };
         
-        setIsLoadingDetails(false);
-        onSave(newFund);
-        onClose(); // 直接关闭，不再进行后续 UI 更新
-        return; 
-    }
-
-    // 非自选模式，进入配置页
-    setIsLoadingDetails(true);
-    const realData = await fetchRealTimeEstimate(fund.code);
-    setIsLoadingDetails(false);
-
-    if (realData) {
-        const updatedFund = {
-            ...fund,
-            name: realData.name || fund.name,
-            lastNav: parseFloat(realData.dwjz),
-            estimatedNav: parseFloat(realData.gsz || realData.dwjz),
-            lastNavDate: realData.jzrq
-        };
         setSelectedFund(updatedFund);
-        setCost(updatedFund.lastNav.toString());
-    } else {
-        setSelectedFund(fund);
-        setCost('1.0000'); 
+        // Auto-fill cost with current NAV for convenience
+        setCost(lastNav > 0 ? lastNav.toString() : ''); 
+        setStep('input');
+
+    } catch (e) {
+        console.error("Failed to fetch details", e);
+        // Fallback if fetch fails
+        if (isWatchlistMode) {
+             onSave({ ...fund, id: `${fund.code}_wl_${Date.now()}`, isWatchlist: true, holdingShares: 0 });
+             onClose();
+        } else {
+            setSelectedFund(fund);
+            setStep('input');
+        }
+    } finally {
+        setIsLoadingDetails(false);
+        setIsSubmitting(false);
     }
-    setStep('input');
   };
 
   const handleConfirm = () => {
@@ -138,17 +165,17 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
     const holdingShares = parseFloat(shares) || 0;
     const holdingCost = parseFloat(cost) || 0;
 
-    // 自动生成初始交易记录 (如果是新添加且没有交易记录)
+    // Generate initial transaction record if new
     let transactions = initialFund?.transactions || [];
     if (!initialFund && holdingShares > 0) {
         const initialTx: Transaction = {
             id: `init_${Date.now()}`,
             type: 'BUY',
-            date: new Date().toISOString().split('T')[0], // 默认为今天
+            date: new Date().toISOString().split('T')[0],
             amount: holdingShares * holdingCost,
             shares: holdingShares,
-            nav: holdingCost, // 假设成本即为买入净值
-            fee: 0 // 初始导入忽略费率
+            nav: holdingCost, 
+            fee: 0 
         };
         transactions = [initialTx];
     }
@@ -172,7 +199,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
   return (
     <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center sm:p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose}></div>
-      <div className="bg-white dark:bg-slate-900 w-full max-w-md h-[90vh] sm:h-auto sm:rounded-2xl rounded-t-2xl shadow-xl z-10 flex flex-col overflow-hidden animate-slide-up sm:animate-fade-in">
+      <div className="bg-white dark:bg-slate-900 w-full max-w-md h-[90vh] sm:h-auto sm:rounded-2xl rounded-t-2xl shadow-xl z-10 flex flex-col overflow-hidden animate-slide-up sm:animate-fade-in transition-all">
         
         <div className="flex justify-between items-center p-4 border-b border-slate-100 dark:border-slate-800">
           <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
@@ -186,9 +213,11 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
 
         <div className="flex-1 overflow-y-auto bg-slate-50 dark:bg-slate-950 p-4 relative">
           {isLoadingDetails && (
-              <div className="absolute inset-0 bg-white/80 dark:bg-slate-900/80 z-20 flex flex-col items-center justify-center">
+              <div className="absolute inset-0 bg-white/80 dark:bg-slate-900/80 z-20 flex flex-col items-center justify-center backdrop-blur-sm">
                   <Loader2 className="animate-spin text-blue-500 mb-2" size={32} />
-                  <span className="text-sm font-bold text-slate-600 dark:text-slate-300">获取数据中...</span>
+                  <span className="text-sm font-bold text-slate-600 dark:text-slate-300">
+                      {isWatchlistMode ? '正在添加到自选...' : '正在获取数据...'}
+                  </span>
               </div>
           )}
 
@@ -214,16 +243,18 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
                   <div 
                     key={fund.id} 
                     onClick={() => handleSelect(fund)}
-                    className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm flex justify-between items-center active:scale-[0.98] transition cursor-pointer"
+                    className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm flex justify-between items-center active:scale-[0.98] transition cursor-pointer hover:border-blue-400"
                   >
                     <div>
                       <div className="font-bold text-slate-800 dark:text-slate-100">{fund.name}</div>
                       <div className="text-xs text-slate-400 mt-1 flex gap-2">
-                        <span className="bg-slate-100 dark:bg-slate-800 px-1 rounded">{fund.code}</span>
+                        <span className="bg-slate-100 dark:bg-slate-800 px-1 rounded font-mono">{fund.code}</span>
                         <span>{fund.tags.join(' ')}</span>
                       </div>
                     </div>
-                    <Plus size={20} className="text-blue-500" />
+                    <div className={`p-2 rounded-full ${isWatchlistMode ? 'bg-blue-50 text-blue-500' : 'bg-slate-100 text-slate-400'}`}>
+                        {isWatchlistMode ? <Eye size={20} /> : <Plus size={20} />}
+                    </div>
                   </div>
                 ))}
                 {!isSearching && query.length > 1 && searchResults.length === 0 && (
@@ -234,15 +265,17 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
           )}
 
           {step === 'input' && selectedFund && !isWatchlistMode && (
-             <div className="space-y-4">
+             <div className="space-y-4 animate-fade-in">
                 <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-blue-100 dark:border-blue-900 shadow-sm">
                    <div className="text-sm text-slate-500 dark:text-slate-400 mb-1">当前基金</div>
                    <div className="font-bold text-lg text-slate-800 dark:text-slate-100">{selectedFund.name}</div>
-                   <div className="text-xs text-blue-500">{selectedFund.code}</div>
-                   <div className="text-xs text-slate-400 mt-1">最新净值: {selectedFund.lastNav} ({selectedFund.lastNavDate})</div>
+                   <div className="text-xs text-blue-500 font-mono mt-0.5">{selectedFund.code}</div>
+                   <div className="text-xs text-slate-400 mt-2 bg-slate-50 dark:bg-slate-800 inline-block px-2 py-1 rounded">
+                       最新净值: <span className="text-slate-700 dark:text-slate-300 font-bold">{selectedFund.lastNav}</span> ({selectedFund.lastNavDate})
+                   </div>
                 </div>
 
-                <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+                <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-5">
                    {/* Group Selection */}
                    <div>
                      <label className="text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 flex items-center gap-1">
@@ -255,7 +288,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
                                 onClick={() => setSelectedGroup(g.id)}
                                 className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition ${
                                     selectedGroup === g.id 
-                                    ? 'bg-blue-600 text-white border-blue-600' 
+                                    ? 'bg-blue-600 text-white border-blue-600 shadow-md' 
                                     : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'
                                 }`}
                             >
@@ -267,45 +300,46 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
 
                    <hr className="border-slate-100 dark:border-slate-800" />
 
-                   <div>
-                     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">持有份额 (份)</label>
-                     <div className="relative">
-                        <PieChart size={16} className="absolute left-3 top-3.5 text-slate-400" />
-                        <input
-                            type="number"
-                            value={shares}
-                            onChange={e => setShares(e.target.value)}
-                            placeholder="0.00"
-                            className="w-full pl-9 pr-3 py-3 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-blue-500 outline-none text-lg font-bold text-slate-900 dark:text-white"
-                        />
-                     </div>
-                   </div>
-                   
-                   <div>
-                     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">持仓成本 (元)</label>
-                     <div className="text-xs text-slate-400 mb-2">默认为最新净值，请修改为你的实际成本</div>
-                     <div className="relative">
-                        <DollarSign size={16} className="absolute left-3 top-3.5 text-slate-400" />
-                        <input
-                            type="number"
-                            value={cost}
-                            onChange={e => setCost(e.target.value)}
-                            placeholder="0.0000"
-                            className="w-full pl-9 pr-3 py-3 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-blue-500 outline-none text-lg font-bold text-slate-900 dark:text-white"
-                        />
-                     </div>
+                   <div className="grid grid-cols-2 gap-4">
+                       <div>
+                         <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5">持有份额 (份)</label>
+                         <div className="relative">
+                            <PieChart size={14} className="absolute left-3 top-3.5 text-slate-400" />
+                            <input
+                                type="number"
+                                value={shares}
+                                onChange={e => setShares(e.target.value)}
+                                placeholder="0.00"
+                                className="w-full pl-8 pr-3 py-2.5 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-blue-500 outline-none font-bold text-slate-900 dark:text-white"
+                            />
+                         </div>
+                       </div>
+                       
+                       <div>
+                         <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5">持仓成本 (元)</label>
+                         <div className="relative">
+                            <DollarSign size={14} className="absolute left-3 top-3.5 text-slate-400" />
+                            <input
+                                type="number"
+                                value={cost}
+                                onChange={e => setCost(e.target.value)}
+                                placeholder="0.0000"
+                                className="w-full pl-8 pr-3 py-2.5 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-blue-500 outline-none font-bold text-slate-900 dark:text-white"
+                            />
+                         </div>
+                       </div>
                    </div>
 
                    <div>
-                     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">已落袋收益 (元)</label>
+                     <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5">已落袋收益 (元)</label>
                      <div className="relative">
-                        <DollarSign size={16} className="absolute left-3 top-3.5 text-slate-400" />
+                        <DollarSign size={14} className="absolute left-3 top-3.5 text-slate-400" />
                         <input
                             type="number"
                             value={realizedProfit}
                             onChange={e => setRealizedProfit(e.target.value)}
                             placeholder="0.00"
-                            className="w-full pl-9 pr-3 py-3 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-blue-500 outline-none text-lg font-bold text-slate-900 dark:text-white"
+                            className="w-full pl-8 pr-3 py-2.5 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 focus:ring-2 focus:ring-blue-500 outline-none font-bold text-slate-900 dark:text-white"
                         />
                      </div>
                    </div>
@@ -318,7 +352,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
           <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900">
             <button 
               onClick={handleConfirm}
-              className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl shadow-lg active:scale-[0.98] transition flex items-center justify-center gap-2"
+              className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl shadow-lg hover:bg-blue-700 active:scale-[0.98] transition flex items-center justify-center gap-2"
             >
               <Check size={20} />
               确认{initialFund ? '修改' : '添加'}
