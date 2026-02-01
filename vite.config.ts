@@ -1,21 +1,30 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
+import { fileURLToPath } from 'url';
+import { dirname, resolve } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 export default defineConfig(({ mode }) => {
-  // 加载环境变量 (虽然 Vercel 会自动注入，但本地开发需要)
-  // @ts-ignore
+  // Load env file based on `mode` in the current working directory.
+  // Set the third parameter to '' to load all env regardless of the `VITE_` prefix.
   const env = loadEnv(mode, process.cwd(), '');
   
   return {
     plugins: [react()],
+    resolve: {
+      alias: {
+        '@': resolve(__dirname, './') // Map '@' to project root
+      }
+    },
     build: {
       outDir: 'dist',
       target: 'esnext'
     },
     define: {
-      // 关键修复：Vite 默认不暴露 process.env。
-      // 这里我们在构建时将 process.env.API_KEY 的值硬编码替换进去。
-      // 优先使用 Vercel 系统变量 process.env.API_KEY，其次是 .env 文件中的变量
+      // Safely inject the API key. 
+      // JSON.stringify is crucial to ensure it's treated as a string literal in the code.
       'process.env.API_KEY': JSON.stringify(process.env.API_KEY || env.API_KEY || '')
     }
   };

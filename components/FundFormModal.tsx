@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Fund, Group, Transaction } from '../types';
 import { searchFunds, fetchRealTimeEstimate } from '../services/fundService';
+import { calculateFundMetrics } from '../utils/finance';
 import { X, Search, Loader2, Plus, Check, Users, DollarSign, PieChart, Eye, ArrowRight } from 'lucide-react';
 
 interface FundFormModalProps {
@@ -26,16 +27,13 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
   const [realizedProfit, setRealizedProfit] = useState<string>('0');
   const [selectedGroup, setSelectedGroup] = useState<string>(currentGroupId === 'all' ? (groups[0]?.id || 'default') : currentGroupId);
   
-  // Loading details
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Reset state when opening
   useEffect(() => {
     if (isOpen) {
       setIsSubmitting(false);
       setIsLoadingDetails(false);
-      
       if (initialFund) {
         setStep('input');
         setSelectedFund(initialFund);
@@ -78,7 +76,6 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
     setIsLoadingDetails(true);
 
     try {
-        // 1. Fetch latest data (Nav, Estimate, Name) immediately
         const realData = await fetchRealTimeEstimate(fund.code);
         
         let finalName = fund.name;
@@ -90,19 +87,15 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
 
         if (realData) {
              lastNav = parseFloat(realData.dwjz);
-             // If dwjz is 0 or invalid, fallback to 1.0 safely
              if (isNaN(lastNav) || lastNav <= 0) lastNav = 1.0;
-
              estimatedNav = parseFloat(realData.gsz || realData.dwjz);
              if (isNaN(estimatedNav) || estimatedNav <= 0) estimatedNav = lastNav;
-             
              estimatedChangePercent = parseFloat(realData.gszzl || "0");
              if (realData.name) finalName = realData.name;
              lastNavDate = realData.jzrq;
              source = realData.source || "official";
         }
 
-        // --- WATCHLIST LOGIC (Either global mode OR forced by specific button) ---
         if (isWatchlistMode || forceWatchlist) {
             const id = `${fund.code}_watchlist_${Date.now()}`;
             const newFund: Fund = {
@@ -114,38 +107,32 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
                 estimatedNav,
                 estimatedChangePercent,
                 source,
-                groupId: 'watchlist', // Virtual ID
+                groupId: 'watchlist',
                 holdingShares: 0,
                 holdingCost: 0,
                 realizedProfit: 0,
                 isWatchlist: true,
                 transactions: []
             };
-            
             onSave(newFund);
             onClose();
-            return; // STRICT RETURN: Do not proceed to input step
+            return;
         }
 
-        // --- PORTFOLIO LOGIC ---
         const updatedFund = {
             ...fund,
             name: finalName,
             lastNav,
             estimatedNav,
             lastNavDate,
-            estimatedChangePercent, // Keep the fetched change percent
+            estimatedChangePercent,
             source
         };
-        
         setSelectedFund(updatedFund);
-        // Auto-fill cost with current NAV for convenience
         setCost(lastNav > 0 ? lastNav.toString() : ''); 
         setStep('input');
-
     } catch (e) {
         console.error("Failed to fetch details", e);
-        // Fallback
         if (isWatchlistMode || forceWatchlist) {
              onSave({ ...fund, id: `${fund.code}_wl_${Date.now()}`, isWatchlist: true, holdingShares: 0 });
              onClose();
@@ -183,12 +170,21 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
         transactions = [initialTx];
     }
 
+    // 使用统一计算逻辑
+    const profitToday = calculateFundMetrics(
+        holdingShares,
+        selectedFund.lastNav,
+        selectedFund.estimatedNav,
+        selectedFund.estimatedChangePercent
+    );
+
     const newFund: Fund = {
       ...selectedFund,
       id: id,
       groupId: groupId,
       holdingShares: holdingShares,
       holdingCost: holdingCost,
+      estimatedProfit: profitToday,
       realizedProfit: parseFloat(realizedProfit) || 0,
       isWatchlist: false,
       transactions: transactions
@@ -249,7 +245,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
                   >
                     <div 
                         className="flex-1 cursor-pointer"
-                        onClick={() => handleSelect(fund, false)} // Default behavior
+                        onClick={() => handleSelect(fund, false)}
                     >
                       <div className="font-bold text-slate-800 dark:text-slate-100">{fund.name}</div>
                       <div className="text-xs text-slate-400 mt-1 flex gap-2">
@@ -259,7 +255,6 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
                     </div>
                     
                     <div className="flex items-center gap-2">
-                         {/* Explicit Add to Watchlist Button */}
                          {!isWatchlistMode && (
                              <button 
                                 onClick={(e) => { e.stopPropagation(); handleSelect(fund, true); }}
@@ -303,7 +298,6 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
                 </div>
 
                 <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-5">
-                   {/* Group Selection */}
                    <div>
                      <label className="text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 flex items-center gap-1">
                         <Users size={14} /> 所属分组
