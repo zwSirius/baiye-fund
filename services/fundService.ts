@@ -125,7 +125,7 @@ export const searchFunds = async (query: string): Promise<Fund[]> => {
   }
 };
 
-// 2. 获取实时估值
+// 2. 获取实时估值 (单个) - 兼容旧逻辑
 export const fetchRealTimeEstimate = async (fundCode: string) => {
     try {
         const response = await fetch(`${API_BASE}/api/estimate/${fundCode}`);
@@ -136,6 +136,24 @@ export const fetchRealTimeEstimate = async (fundCode: string) => {
         return null;
     }
 };
+
+// 2.1 批量获取实时估值 (优化版)
+export const fetchBatchEstimates = async (fundCodes: string[]) => {
+    try {
+        const response = await fetch(`${API_BASE}/api/estimate/batch`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ codes: fundCodes })
+        });
+        if (!response.ok) return [];
+        return await response.json();
+    } catch (error) {
+        console.warn("Batch estimate failed:", error);
+        return [];
+    }
+}
 
 // 3. 获取基金详情
 export const fetchFundDetails = async (fund: Fund): Promise<Fund> => {
@@ -200,78 +218,78 @@ export const fetchMarketIndices = async (codes?: string[]): Promise<SectorIndex[
     }
 };
 
-// 6. 批量更新 (增强健壮性：防止数据清零)
+// 6. 批量更新 (优化：使用 Batch API)
 export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]> => {
-    // 如果没有基金，直接返回空数组，避免无谓请求
     if (currentFunds.length === 0) return [];
 
-    const promises = currentFunds.map(async (fund) => {
-        try {
-            const realData = await fetchRealTimeEstimate(fund.code);
-            
-            // 如果获取失败，务必返回原始 fund 对象，而不是 null 或 默认对象
-            if (!realData) {
-                return fund;
-            }
+    // 提取所有 Code
+    const codes = Array.from(new Set(currentFunds.map(f => f.code)));
+    
+    // 调用批量接口
+    let estimatesMap: Record<string, any> = {};
+    try {
+        const estimates = await fetchBatchEstimates(codes);
+        estimates.forEach((item: any) => {
+            estimatesMap[item.fundcode] = item;
+        });
+    } catch (e) {
+        console.error("Batch update failed, falling back to original data", e);
+        return currentFunds;
+    }
 
-            let estimatedNav = fund.lastNav;
-            let estimatedChangePercent = 0;
-            let name = fund.name;
-            let lastNav = fund.lastNav;
-            let lastNavDate = fund.lastNavDate;
-            let source = fund.source;
+    // 映射结果
+    return currentFunds.map(fund => {
+        const realData = estimatesMap[fund.code];
+        
+        if (!realData) return fund; // 如果该基金数据缺失，保持原状
 
-            const apiDwjz = parseFloat(realData.dwjz);
-            const apiGsz = parseFloat(realData.gsz);
+        let estimatedNav = fund.lastNav;
+        let estimatedChangePercent = 0;
+        let name = fund.name;
+        let lastNav = fund.lastNav;
+        let lastNavDate = fund.lastNavDate;
+        let source = fund.source;
 
-            // 更新单位净值
-            if (!isNaN(apiDwjz) && apiDwjz > 0) {
-                lastNav = apiDwjz;
-                lastNavDate = realData.jzrq;
-            } else if (lastNav === 0) {
-                 // 如果原始净值为0，尝试用估值填充，避免显示0
-                 lastNav = !isNaN(apiGsz) ? apiGsz : 1.0;
-            }
+        const apiDwjz = parseFloat(realData.dwjz);
+        const apiGsz = parseFloat(realData.gsz);
 
-            // 更新估值和涨跌幅
-            if (!isNaN(apiGsz) && apiGsz > 0) {
-                estimatedNav = apiGsz;
-                estimatedChangePercent = parseFloat(realData.gszzl || "0");
-                source = realData.source;
-            } else if (!isNaN(apiDwjz) && apiDwjz > 0) {
-                // 如果没有估值，用净值兜底
-                estimatedNav = apiDwjz;
-                estimatedChangePercent = 0;
-            } else {
-                // 如果API数据完全不可用，保持原状
-                 estimatedNav = fund.estimatedNav > 0 ? fund.estimatedNav : 1.0;
-            }
-
-            // 优先使用 API 返回的名称，如果 API 没返回（很少见），用旧的
-            if (realData.name && realData.name.length > 0) {
-                name = realData.name;
-            }
-
-            const profitToday = (estimatedNav - lastNav) * fund.holdingShares;
-
-            return {
-                ...fund,
-                name,
-                lastNav,
-                lastNavDate,
-                estimatedNav,
-                estimatedChangePercent,
-                estimatedProfit: profitToday,
-                source
-            };
-        } catch (e) {
-            console.error(`Update failed for ${fund.code}, keeping original data`, e);
-            return fund; // 出错时返回原始数据，防止列表清空
+        // 更新单位净值 (逻辑同之前，确保不为0)
+        if (!isNaN(apiDwjz) && apiDwjz > 0) {
+            lastNav = apiDwjz;
+            lastNavDate = realData.jzrq;
+        } else if (lastNav === 0) {
+            lastNav = !isNaN(apiGsz) ? apiGsz : 1.0;
         }
-    });
 
-    const results = await Promise.all(promises);
-    return results;
+        // 更新估值和涨跌幅
+        if (!isNaN(apiGsz) && apiGsz > 0) {
+            estimatedNav = apiGsz;
+            estimatedChangePercent = parseFloat(realData.gszzl || "0");
+            source = realData.source;
+        } else if (!isNaN(apiDwjz) && apiDwjz > 0) {
+            estimatedNav = apiDwjz;
+            estimatedChangePercent = 0;
+        } else {
+             estimatedNav = fund.estimatedNav > 0 ? fund.estimatedNav : 1.0;
+        }
+
+        if (realData.name && realData.name.length > 0) {
+            name = realData.name;
+        }
+
+        const profitToday = (estimatedNav - lastNav) * fund.holdingShares;
+
+        return {
+            ...fund,
+            name,
+            lastNav,
+            lastNavDate,
+            estimatedNav,
+            estimatedChangePercent,
+            estimatedProfit: profitToday,
+            source
+        };
+    });
 };
 
 // 辅助：获取某个日期的净值 (修复版：从历史接口查找)
@@ -284,15 +302,8 @@ export const getNavByDate = async (fundCode: string, dateStr: string): Promise<n
         const exactMatch = history.find((h: any) => h.date === dateStr);
         if (exactMatch) return exactMatch.value;
 
-        // 如果没有精确匹配（比如非交易日），查找最近的一个之前的日期
-        // 假设 history 是有序的（通常 akshare 是按时间升序）
-        // 如果是升序： 2023-01-01, 2023-01-02 ...
-        // 如果我们找 2023-01-01.5 (非交易日)，我们应该取 01-01 的值
-        
-        // 简单处理：倒序查找第一个小于 dateStr 的
+        // 如果没有精确匹配，查找最近的一个之前的日期
         const targetDate = new Date(dateStr).getTime();
-        
-        // 排序确保是降序 (新 -> 旧)
         const sortedHistory = [...history].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
         
         for (const h of sortedHistory) {
@@ -301,7 +312,7 @@ export const getNavByDate = async (fundCode: string, dateStr: string): Promise<n
             }
         }
         
-        // 如果都找不到，尝试获取实时估值作为兜底（比如今天是交易日但还没收盘）
+        // 如果都找不到，尝试获取实时估值作为兜底
         const realData = await fetchRealTimeEstimate(fundCode);
         if (realData && realData.dwjz && parseFloat(realData.dwjz) > 0) {
             return parseFloat(realData.dwjz);
