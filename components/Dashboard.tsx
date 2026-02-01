@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Fund, Group } from '../types';
-import { RefreshCw, PieChart as PieChartIcon, Settings2, Users, LayoutDashboard, ChevronRight, Zap } from 'lucide-react';
+import { RefreshCw, LayoutDashboard, ChevronRight, Zap, Clock, Sun, Moon, Coffee } from 'lucide-react';
 
 interface DashboardProps {
   funds: Fund[];
@@ -15,7 +15,6 @@ interface DashboardProps {
   onFundClick: (fund: Fund) => void;
   onGroupChange: (groupId: string) => void;
   onManageGroups: () => void;
-  onOpenSummary?: () => void; 
 }
 
 const formatMoney = (val: number) => {
@@ -24,6 +23,57 @@ const formatMoney = (val: number) => {
 
 // Colors
 const SUMMARY_COLORS = ['#2563eb', '#ef4444', '#f59e0b', '#22c55e', '#6366f1', '#ec4899'];
+
+// Skeleton Component
+const Skeleton = ({ className }: { className: string }) => (
+    <div className={`animate-pulse bg-slate-200 dark:bg-slate-700 rounded ${className}`}></div>
+);
+
+// Market Status Component
+const MarketStatus = () => {
+    const [status, setStatus] = useState<{label: string, icon: any, color: string}>({label: '加载中', icon: Clock, color: 'text-slate-400'});
+    
+    useEffect(() => {
+        const checkStatus = () => {
+            const now = new Date();
+            const day = now.getDay();
+            const hour = now.getHours();
+            const min = now.getMinutes();
+            const timeVal = hour * 60 + min;
+
+            if (day === 0 || day === 6) {
+                setStatus({label: '周末休市', icon: Moon, color: 'text-blue-400'});
+                return;
+            }
+            
+            // 9:30 = 570, 11:30 = 690, 13:00 = 780, 15:00 = 900
+            if (timeVal < 570) {
+                 setStatus({label: '等待开盘', icon: Coffee, color: 'text-orange-400'});
+            } else if (timeVal >= 570 && timeVal < 690) {
+                 setStatus({label: '盘中交易', icon: Zap, color: 'text-green-500 animate-pulse'});
+            } else if (timeVal >= 690 && timeVal < 780) {
+                 setStatus({label: '午间休市', icon: Coffee, color: 'text-slate-400'});
+            } else if (timeVal >= 780 && timeVal < 900) {
+                 setStatus({label: '盘中交易', icon: Zap, color: 'text-green-500 animate-pulse'});
+            } else {
+                 setStatus({label: '已收盘', icon: Moon, color: 'text-blue-400'});
+            }
+        };
+        
+        checkStatus();
+        const interval = setInterval(checkStatus, 60000);
+        return () => clearInterval(interval);
+    }, []);
+
+    const Icon = status.icon;
+
+    return (
+        <div className={`flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-full bg-white/10 backdrop-blur-md border border-white/10 ${status.color}`}>
+            <Icon size={10} />
+            <span>{status.label}</span>
+        </div>
+    );
+};
 
 export const Dashboard: React.FC<DashboardProps> = ({ 
     funds, groups, currentGroupId, totalProfit, totalMarketValue, lastUpdate, isRefreshing,
@@ -128,12 +178,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
                  {g.name}
              </button>
          ))}
-         <button 
-            onClick={onManageGroups}
-            className="whitespace-nowrap px-2.5 py-1.5 rounded-full text-xs font-bold bg-slate-100 text-slate-400 border border-transparent hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 flex items-center gap-1"
-         >
-             <Settings2 size={12} />
-         </button>
       </div>
 
       {/* Asset Card - Compact for Mobile */}
@@ -149,44 +193,49 @@ export const Dashboard: React.FC<DashboardProps> = ({
         <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-white/10 rounded-full blur-xl"></div>
 
         <div className="relative p-5 text-white">
-            <div className="flex justify-between items-start mb-2">
-            <span className="text-white/80 text-xs font-medium flex items-center gap-1 backdrop-blur-sm bg-white/10 px-2 py-0.5 rounded-lg">
-                {isSummary ? <><LayoutDashboard size={12}/> 多账户总资产</> : (currentGroupId === 'all' ? '总资产' : groups.find(g => g.id === currentGroupId)?.name || '分组资产')}
-            </span>
-            <div 
-                className="bg-white/20 p-1.5 rounded-full cursor-pointer hover:bg-white/30 transition active:scale-90 backdrop-blur-md" 
-                onClick={onRefresh}
-            >
-                <RefreshCw size={14} className={`text-white ${isRefreshing ? 'animate-spin' : ''}`} />
-            </div>
+            <div className="flex justify-between items-center mb-4">
+                <span className="text-white/80 text-xs font-medium flex items-center gap-1 backdrop-blur-sm bg-white/10 px-2 py-0.5 rounded-lg">
+                    {isSummary ? <><LayoutDashboard size={12}/> 多账户总资产</> : (currentGroupId === 'all' ? '总资产' : groups.find(g => g.id === currentGroupId)?.name || '分组资产')}
+                </span>
+                
+                {/* Market Status & Refresh */}
+                <div className="flex items-center gap-2">
+                    <MarketStatus />
+                    <div 
+                        className="bg-white/20 p-1.5 rounded-full cursor-pointer hover:bg-white/30 transition active:scale-90 backdrop-blur-md" 
+                        onClick={onRefresh}
+                    >
+                        <RefreshCw size={14} className={`text-white ${isRefreshing ? 'animate-spin' : ''}`} />
+                    </div>
+                </div>
             </div>
             
-            <div className="text-3xl font-black mb-4 tracking-tight flex items-baseline gap-1">
+            <div className="text-3xl font-black mb-5 tracking-tight flex items-baseline gap-1 min-h-[40px]">
                 <span className="text-lg font-normal opacity-80">¥</span>
-                {formatMoney(totalMarketValue)}
+                {isRefreshing ? <Skeleton className="h-8 w-40 bg-white/20" /> : formatMoney(totalMarketValue)}
             </div>
 
-            <div className="grid grid-cols-2 gap-3 bg-black/10 rounded-lg p-2.5 backdrop-blur-sm border border-white/5">
+            <div className="grid grid-cols-2 gap-3 bg-black/10 rounded-lg p-3 backdrop-blur-sm border border-white/5">
                 <div>
-                    <div className="text-white/70 text-[10px] mb-0.5">今日预估盈亏</div>
+                    <div className="text-white/70 text-[10px] mb-1">今日预估盈亏</div>
                     <div className={`text-base font-bold flex items-center ${totalProfit >= 0 ? 'text-red-300' : 'text-green-300'}`}>
-                    {totalProfit > 0 ? '+' : ''}{formatMoney(totalProfit)}
+                    {isRefreshing ? <Skeleton className="h-5 w-20 bg-white/20" /> : (
+                        <>{totalProfit > 0 ? '+' : ''}{formatMoney(totalProfit)}</>
+                    )}
                     </div>
                 </div>
                 <div className="text-right">
-                    <div className="text-white/70 text-[10px] mb-0.5">累计持有收益</div>
-                    <div className={`text-base font-bold ${displayTotalReturn >= 0 ? 'text-red-300' : 'text-green-300'}`}>
-                    {displayTotalReturn > 0 ? '+' : ''}{formatMoney(displayTotalReturn)}
+                    <div className="text-white/70 text-[10px] mb-1">累计持有收益</div>
+                    <div className={`text-base font-bold flex justify-end ${displayTotalReturn >= 0 ? 'text-red-300' : 'text-green-300'}`}>
+                    {isRefreshing ? <Skeleton className="h-5 w-20 bg-white/20" /> : (
+                        <>{displayTotalReturn > 0 ? '+' : ''}{formatMoney(displayTotalReturn)}</>
+                    )}
                     </div>
                 </div>
             </div>
 
-            <div className="text-right text-[10px] text-white/40 mt-2 flex justify-between items-center">
-                 <span className="flex items-center gap-1">
-                    <Zap size={10} className="text-yellow-300"/> 
-                    {totalProfit !== 0 ? '估值动态更新' : '等待开盘'}
-                 </span>
-                 <span>{isRefreshing ? '正在同步...' : `${lastUpdate.toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit', second: '2-digit'})}`}</span>
+            <div className="text-right text-[10px] text-white/40 mt-2">
+                 更新于 {lastUpdate.toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit', second: '2-digit'})}
             </div>
         </div>
       </div>
@@ -237,9 +286,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
           {/* Funds Mode */}
           {!isSummary && funds.length === 0 && (
               <div className="text-center py-8 text-slate-400 bg-white dark:bg-slate-900 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
-                  <Users size={24} className="mx-auto mb-2 opacity-50" />
+                  <div className="mx-auto w-12 h-12 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-2">
+                     <LayoutDashboard size={20} className="opacity-50" />
+                  </div>
                   <p className="text-xs">暂无基金</p>
-                  <p className="text-[10px] mt-1">点击右上角 + 号添加</p>
+                  <p className="text-[10px] mt-1 opacity-60">点击右上角 + 号添加</p>
               </div>
           )}
 
@@ -255,15 +306,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     className="bg-white dark:bg-slate-900 rounded-xl p-3 shadow-sm border border-slate-100 dark:border-slate-800 hover:shadow-md transition-all cursor-pointer active:scale-[0.99] relative"
                 >
                 {/* Source Indicator */}
-                {fund.source === 'holdings_calc' && (
+                {fund.source === 'holdings_calc_batch' && (
                     <div className="absolute top-3 right-3 flex items-center gap-1">
-                        <span className="w-1 h-1 rounded-full bg-blue-500 animate-pulse"></span>
-                        <span className="text-[9px] text-blue-500 font-medium opacity-80">估算</span>
+                        <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+                        </span>
                     </div>
                 )}
 
                 {/* Row 1: Name and Change % */}
-                <div className="flex justify-between items-start mb-2 pr-8">
+                <div className="flex justify-between items-start mb-2 pr-6">
                     <div>
                         <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm leading-tight mb-0.5 line-clamp-1">{fund.name || fund.code}</h3>
                         <div className="flex items-center gap-2 text-[10px] text-slate-400">
@@ -272,7 +325,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         </div>
                     </div>
                     <div className={`text-base font-black ${fund.estimatedChangePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                        {fund.estimatedChangePercent > 0 ? '+' : ''}{fund.estimatedChangePercent}%
+                        {isRefreshing ? <Skeleton className="h-5 w-12" /> : (
+                            <>{fund.estimatedChangePercent > 0 ? '+' : ''}{fund.estimatedChangePercent}%</>
+                        )}
                     </div>
                 </div>
 
@@ -283,18 +338,24 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <div className="grid grid-cols-3 gap-2">
                     <div className="col-span-1">
                         <div className="text-[10px] text-slate-400 mb-0.5">持仓金额</div>
-                        <div className="text-xs font-bold text-slate-700 dark:text-slate-200">{formatMoney(marketValue)}</div>
+                        <div className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                            {isRefreshing ? <Skeleton className="h-4 w-16" /> : formatMoney(marketValue)}
+                        </div>
                     </div>
                     <div className="col-span-1 text-center border-l border-slate-50 dark:border-slate-800">
                         <div className="text-[10px] text-slate-400 mb-0.5">当日盈亏</div>
                         <div className={`text-xs font-bold ${fund.estimatedProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                            {fund.estimatedProfit > 0 ? '+' : ''}{fund.estimatedProfit.toFixed(2)}
+                            {isRefreshing ? <Skeleton className="h-4 w-12 mx-auto" /> : (
+                                <>{fund.estimatedProfit > 0 ? '+' : ''}{fund.estimatedProfit.toFixed(2)}</>
+                            )}
                         </div>
                     </div>
                     <div className="col-span-1 text-right border-l border-slate-50 dark:border-slate-800">
                         <div className="text-[10px] text-slate-400 mb-0.5">持有盈亏</div>
                         <div className={`text-xs font-bold ${totalReturn >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                            {totalReturn > 0 ? '+' : ''}{totalReturn.toFixed(2)}
+                            {isRefreshing ? <Skeleton className="h-4 w-12 ml-auto" /> : (
+                                <>{totalReturn > 0 ? '+' : ''}{totalReturn.toFixed(2)}</>
+                            )}
                         </div>
                     </div>
                 </div>

@@ -30,21 +30,37 @@ app.add_middleware(
 # --- CACHE ---
 class DataCache:
     def __init__(self):
-        self.funds_list = pd.DataFrame()
+        self.funds_df = pd.DataFrame()
+        self.funds_search_cache = [] # Optimized list of dicts for fast search
         self.funds_list_time = None
         self.holdings = {}
 
-    async def get_funds(self):
-        if self.funds_list.empty or not self.funds_list_time or (datetime.now() - self.funds_list_time).total_seconds() > 86400:
-            logger.info("Updating fund list...")
+    async def get_funds_search_list(self):
+        # 缓存有效期 24 小时
+        if not self.funds_search_cache or not self.funds_list_time or (datetime.now() - self.funds_list_time).total_seconds() > 86400:
+            logger.info("Updating fund list cache...")
             try:
+                # Akshare 同步接口放入线程池
                 df = await run_in_threadpool(ak.fund_name_em)
-                self.funds_list = df
+                self.funds_df = df
+                
+                # 预处理搜索列表，避免每次请求都操作 DataFrame (大幅提升搜索性能)
+                # 仅保留需要的字段以减少内存占用
+                temp_list = []
+                for _, row in df.iterrows():
+                    temp_list.append({
+                        "code": str(row['基金代码']),
+                        "name": str(row['基金简称']),
+                        "type": str(row['基金类型']),
+                        "pinyin": str(row['拼音缩写'])
+                    })
+                self.funds_search_cache = temp_list
                 self.funds_list_time = datetime.now()
+                logger.info(f"Fund list updated. Total: {len(temp_list)}")
             except Exception as e:
                 logger.error(f"Fund list update failed: {e}")
-                if self.funds_list.empty: return pd.DataFrame()
-        return self.funds_list
+                if not self.funds_search_cache: return []
+        return self.funds_search_cache
 
     async def get_holdings(self, code):
         cache_entry = self.holdings.get(code)
@@ -63,12 +79,22 @@ def _get_current_china_time():
     return datetime.utcnow() + timedelta(hours=8)
 
 def _get_time_phase():
+    """
+    Returns: 'PRE_MARKET' | 'MARKET' | 'LUNCH_BREAK' | 'POST_MARKET' | 'WEEKEND'
+    """
     now = _get_current_china_time()
+    
     if now.weekday() >= 5: return 'WEEKEND'
+    
     t = now.time()
-    if t < time(9, 30): return 'PRE_MARKET'
-    elif t <= time(15, 0): return 'MARKET'
-    else: return 'POST_MARKET'
+    if t < time(9, 30): 
+        return 'PRE_MARKET'
+    elif t >= time(11, 30) and t < time(13, 0):
+        return 'LUNCH_BREAK'
+    elif t <= time(15, 0): 
+        return 'MARKET'
+    else: 
+        return 'POST_MARKET'
 
 def _get_current_china_date_str():
     return _get_current_china_time().strftime('%Y-%m-%d')
@@ -77,6 +103,7 @@ def _get_current_china_date_str():
 
 def _fetch_akshare_history_sync(code: str):
     try:
+        # 只取最近一年的数据，减少网络传输和内存占用
         df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
         if not df.empty:
             if '净值日期' in df.columns: df['净值日期'] = df['净值日期'].astype(str)
@@ -100,9 +127,7 @@ def _fetch_official_estimate_sync(code: str):
     return data
 
 def _parse_quarter_str(q_str):
-    """Helper to parse '2023年4季度' into comparable int 20234"""
     try:
-        # Expected format: YYYY年N季度
         if '年' in q_str and '季度' in q_str:
             parts = q_str.split('年')
             year = int(parts[0])
@@ -113,48 +138,28 @@ def _parse_quarter_str(q_str):
     return 0
 
 def _fetch_holdings_sync(code: str):
-    """
-    Robust fetching of latest holdings.
-    Iterates recent years, merges data, sorts by Quarter to find the absolute latest.
-    """
     try:
         current_year = datetime.now().year
         all_dfs = []
-        
-        # Try fetching this year and last year to ensure we get the latest report
         for year in [current_year, current_year - 1]:
             try:
                 df = ak.fund_portfolio_hold_em(symbol=code, date=year)
                 if not df.empty and '季度' in df.columns:
                     all_dfs.append(df)
-            except: 
-                continue
+            except: continue
         
-        if not all_dfs:
-            return []
+        if not all_dfs: return []
 
-        # Combine all found dataframes
         combined_df = pd.concat(all_dfs)
-        
-        if combined_df.empty:
-            return []
+        if combined_df.empty: return []
 
-        # Get unique quarters and sort them properly
         unique_quarters = combined_df['季度'].unique()
-        # Sort quarters descending based on parsed value (e.g. 20241 > 20234)
         sorted_quarters = sorted(unique_quarters, key=_parse_quarter_str, reverse=True)
-        
-        if not sorted_quarters:
-            return []
+        if not sorted_quarters: return []
             
-        latest_q = sorted_quarters[0] # The most recent quarter string
-        
-        # Filter for the latest quarter
+        latest_q = sorted_quarters[0]
         latest_df = combined_df[combined_df['季度'] == latest_q].copy()
-        
-        # Process holdings
         latest_df['占净值比例'] = pd.to_numeric(latest_df['占净值比例'], errors='coerce').fillna(0)
-        # Sort by percentage to get top holdings
         latest_df = latest_df.sort_values(by='占净值比例', ascending=False).head(10)
         
         holdings = []
@@ -164,17 +169,17 @@ def _fetch_holdings_sync(code: str):
                 "name": str(row['股票名称']),
                 "percent": float(row['占净值比例'])
             })
-            
         return holdings
     except Exception as e:
         logger.error(f"Error fetching holdings for {code}: {e}")
         return []
 
 def _fetch_stock_quotes_sync(stock_codes: list):
-    """Batch fetch stock quotes (IO Bound but fast)"""
+    """Batch fetch stock quotes"""
     if not stock_codes: return {}
     unique_codes = list(set(stock_codes))
-    batch_size = 40
+    # 东方财富接口限制，分批更安全
+    batch_size = 30 
     quotes = {}
     headers = {"User-Agent": "Mozilla/5.0", "Referer": "http://quote.eastmoney.com/"}
 
@@ -187,7 +192,7 @@ def _fetch_stock_quotes_sync(stock_codes: list):
         
         url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f3,f12&secids={','.join(secids)}"
         try:
-            resp = requests.get(url, headers=headers, timeout=3)
+            resp = requests.get(url, headers=headers, timeout=2.5)
             data = resp.json()
             if data and 'data' in data and 'diff' in data['data']:
                 for item in data['data']['diff']:
@@ -200,35 +205,39 @@ def _fetch_stock_quotes_sync(stock_codes: list):
 # --- ASYNC HELPERS ---
 
 async def _fetch_fund_base_data_concurrently(code: str):
-    """
-    Parallely fetch:
-    1. Official real-time data (HTTP)
-    2. Akshare history (HTTP/Processing)
-    """
     loop = asyncio.get_running_loop()
-    
-    # Run these in parallel threads
     official_task = loop.run_in_executor(None, _fetch_official_estimate_sync, code)
     history_task = loop.run_in_executor(None, _fetch_akshare_history_sync, code)
-    
     official_data, history_df = await asyncio.gather(official_task, history_task)
-    
     return code, official_data, history_df
 
 # --- API ENDPOINTS ---
 
+@app.get("/api/status")
+def get_market_status():
+    """Returns current market phase"""
+    return {"phase": _get_time_phase(), "timestamp": datetime.now().timestamp()}
+
 @app.get("/api/search")
 async def search_funds_api(key: str = Query(..., min_length=1)):
     try:
-        df = await data_cache.get_funds()
-        if df.empty: return []
+        # 使用内存缓存列表进行搜索，极快
+        funds_list = await data_cache.get_funds_search_list()
+        if not funds_list: return []
+        
         key = key.upper()
-        mask = (df['基金代码'].str.contains(key, na=False) | 
-                df['基金简称'].str.contains(key, na=False) | 
-                df['拼音缩写'].str.contains(key, na=False))
-        result = df[mask].head(20)
-        return [{"code": str(r['基金代码']),"name": str(r['基金简称']),"type": str(r['基金类型'])} for _, r in result.iterrows()]
-    except: return []
+        # 简单匹配逻辑：代码、名称、拼音
+        results = []
+        count = 0
+        for f in funds_list:
+            if key in f['code'] or key in f['name'] or key in f['pinyin']:
+                results.append(f)
+                count += 1
+                if count >= 20: break # Limit response size
+        return results
+    except Exception as e: 
+        logger.error(f"Search error: {e}")
+        return []
 
 @app.get("/api/market")
 async def get_market_indices(codes: str = Query(None)):
@@ -253,7 +262,6 @@ async def get_market_indices(codes: str = Query(None)):
 
 @app.get("/api/estimate/{code}")
 async def get_estimate_api(code: str):
-    # Single item wrapper for batch logic
     res = await get_batch_estimate(codes=[code])
     return res[0] if res else {}
 
@@ -261,12 +269,9 @@ async def get_estimate_api(code: str):
 async def get_batch_estimate(codes: List[str] = Body(..., embed=True)):
     if not codes: return []
     
-    # 1. Concurrent Fetching of Base Data
-    # This is the biggest performance boost: Fetching 20 funds takes same time as 1
     tasks = [_fetch_fund_base_data_concurrently(code) for code in codes]
     base_results = await asyncio.gather(*tasks)
     
-    # 2. Process Initial Data
     results_map = {}
     calc_needed_codes = []
     phase = _get_time_phase()
@@ -275,7 +280,6 @@ async def get_batch_estimate(codes: List[str] = Body(..., embed=True)):
     for code, official_data, history_df in base_results:
         res = { "fundcode": code, **official_data }
         
-        # Merge History NAV
         last_nav = 1.0
         if not history_df.empty:
             latest = history_df.iloc[-1]
@@ -287,10 +291,10 @@ async def get_batch_estimate(codes: List[str] = Body(..., embed=True)):
             
         res['_last_nav'] = last_nav
         
-        # Decide if we need calculation
         need_calc = False
         
-        if phase == 'PRE_MARKET' or phase == 'WEEKEND':
+        # 逻辑：非交易时间优先用历史或官方已更新数据
+        if phase in ['PRE_MARKET', 'WEEKEND']:
             res['gsz'] = res['dwjz']
             if len(history_df) >= 2:
                 prev = float(history_df.iloc[-2]['单位净值'])
@@ -303,14 +307,17 @@ async def get_batch_estimate(codes: List[str] = Body(..., embed=True)):
         elif phase == 'POST_MARKET':
              official_updated = (res.get('jzrq') == today_str)
              if official_updated:
-                 # Official data is updated for today
                  curr = float(res.get('dwjz', 0))
                  prev = 0
                  if not history_df.empty:
+                    # 检查历史数据是否也已更新
                     if str(history_df.iloc[-1]['净值日期']) == today_str:
                          if len(history_df) >= 2: prev = float(history_df.iloc[-2]['单位净值'])
                     else:
                          prev = float(history_df.iloc[-1]['单位净值'])
+                 
+                 # 兜底：如果历史数据没更新，用官方 JS 的昨日净值推算? 
+                 # 简化：如果能算出 prev，就算，否则由前端展示
                  if prev > 0:
                      res['gsz'] = str(curr)
                      res['gszzl'] = "{:.2f}".format(((curr - prev)/prev)*100)
@@ -318,10 +325,11 @@ async def get_batch_estimate(codes: List[str] = Body(..., embed=True)):
              else:
                  need_calc = True
         
-        else: # MARKET
+        else: # MARKET / LUNCH_BREAK
             off_gsz = float(res.get("gsz", 0))
             if off_gsz > 0 and off_gsz != last_nav:
-                pass # Official data is alive
+                # 官方数据有变动（非昨日收盘价），则信任官方
+                pass 
             else:
                 need_calc = True
         
@@ -330,9 +338,7 @@ async def get_batch_estimate(codes: List[str] = Body(..., embed=True)):
         
         results_map[code] = res
 
-    # 3. Batch Calculation for needed funds
     if calc_needed_codes:
-        # Fetch holdings (Cache -> Sync Fetch in Thread)
         fund_holdings_map = {}
         all_stocks = []
         
@@ -345,10 +351,8 @@ async def get_batch_estimate(codes: List[str] = Body(..., embed=True)):
             fund_holdings_map[code] = holdings
             for h in holdings: all_stocks.append(h['code'])
             
-        # Fetch Quotes (Once)
         quotes = await run_in_threadpool(_fetch_stock_quotes_sync, all_stocks)
         
-        # Compute
         for code in calc_needed_codes:
             data = results_map[code]
             holdings = fund_holdings_map.get(code, [])
@@ -358,24 +362,61 @@ async def get_batch_estimate(codes: List[str] = Body(..., embed=True)):
                 data['gsz'] = str(last_nav)
                 data['gszzl'] = "0.00"
                 continue
-                
-            w_change = 0
-            total_w = 0
-            for h in holdings:
-                w_change += (quotes.get(h['code'], 0) * h['percent'])
-                total_w += h['percent']
             
-            if total_w > 0:
-                est_change = w_change / 100.0
-                est_nav = last_nav * (1 + est_change / 100.0)
-                data['gsz'] = "{:.4f}".format(est_nav)
-                data['gszzl'] = "{:.2f}".format(est_change)
-                data['source'] = "holdings_calc_batch"
-            else:
-                data['gsz'] = str(last_nav)
-                data['gszzl'] = "0.00"
+            # 改进后的估值算法：归一化权重
+            # 计算 Top 10 的加权涨跌幅之和
+            weighted_change_sum = 0
+            total_weight_top10 = 0
+            
+            for h in holdings:
+                stock_change = quotes.get(h['code'], 0)
+                weight = h['percent']
+                weighted_change_sum += (stock_change * weight)
+                total_weight_top10 += weight
+            
+            est_change_pct = 0
+            if total_weight_top10 > 0:
+                # 核心逻辑：假设 Top 10 代表了整个股票仓位的走势
+                # 例如 Top 10 占 50%，加权和为 1.0 (即贡献了1%)。
+                # 那么 Top 10 的平均涨跌幅是 1.0 / 50 = 0.02 (2%)。
+                # 假设剩余股票也涨 2%。
+                # 但是，基金通常有部分现金或债券。我们假设股票仓位系数 (Stock Position Factor)
+                # 混合型基金通常股票仓位 60-95%。为了保守，我们不完全放大到 100%。
+                # 这里采用：归一化涨跌幅 * (Top10权重 / 100 * 放大系数)
+                # 简化为：weighted_change_sum / 100 仅仅是 Top10 的贡献。
+                # 如果我们要预测全基金，比较好的经验公式是：
+                # (weighted_change_sum / total_weight_top10) * (total_weight_top10 / 100 * 1.05) ??
+                # 不，最简单的归一化：
+                # est_change_pct = weighted_change_sum / total_weight_top10 (这是 Top 10 的平均涨幅)
+                # 然后乘以基金的股票仓位估算 (例如 0.85)
+                # 为防止过度高估，我们使用保守策略：
+                # est_change_pct = weighted_change_sum / 100.0 (原始逻辑，绝对贡献)
+                # 然后适当放大，比如 1.1 倍，因为非重仓股通常跟随重仓股
+                
+                # 修正：直接使用 Top 10 的加权贡献，但这往往偏小。
+                # 使用归一化尝试：
+                normalized_change = weighted_change_sum / total_weight_top10
+                
+                # 假设基金股票仓位大概是 Top 10 权重的 1.5 倍 (例如 Top10 50%, 总仓位 75%)
+                # 这是一个启发式参数，取决于基金类型，但 1.2 - 1.5 是常见范围
+                # 为了安全，我们取 max(weighted_change_sum/100, normalized_change * 0.8)
+                
+                # 方案 B：直接用 weighted_change_sum / 100，这代表“如果其他股票不涨不跌，基金的涨幅”。
+                # 这确实是下限。
+                # 我们采用稍微激进一点的修正：
+                if total_weight_top10 < 30:
+                    # 权重太小，数据可能不全，保守处理
+                    est_change_pct = weighted_change_sum / 100.0
+                else:
+                    # 归一化后，乘以一个经验仓位系数 (0.85)
+                    # 解释：假设基金85%是股票，且所有股票涨幅接近 Top 10 平均值
+                    est_change_pct = normalized_change * 0.85
+            
+            est_nav = last_nav * (1 + est_change_pct / 100.0)
+            data['gsz'] = "{:.4f}".format(est_nav)
+            data['gszzl'] = "{:.2f}".format(est_change_pct)
+            data['source'] = "holdings_calc_batch"
 
-    # Cleanup
     final = []
     for code in codes:
         r = results_map[code]
@@ -388,18 +429,15 @@ async def get_fund_detail(code: str):
     try:
         manager_name = "暂无"
         try:
-             # Fast sync call wrapped in thread
              m_df = await run_in_threadpool(ak.fund_manager_em, symbol=code)
              if not m_df.empty: manager_name = m_df.iloc[-1]['姓名']
         except: pass
 
-        # Reuse holding fetch logic
         holdings = await data_cache.get_holdings(code)
         if not holdings:
             holdings = await run_in_threadpool(_fetch_holdings_sync, code)
             data_cache.set_holdings(code, holdings)
         
-        # Fill quotes for detail view
         if holdings:
             quotes = await run_in_threadpool(_fetch_stock_quotes_sync, [h['code'] for h in holdings])
             for h in holdings: h['changePercent'] = quotes.get(h['code'], 0)
