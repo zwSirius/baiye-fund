@@ -9,6 +9,8 @@ import re
 import json
 import logging
 import asyncio
+import random
+import time as time_module
 from datetime import datetime, timedelta, time
 from typing import List, Dict, Any
 
@@ -27,11 +29,61 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- CACHE ---
+# --- USER AGENTS & SESSION ---
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+]
+
+# 全局 Session 对象，复用 TCP 连接，显著提升性能
+global_session = requests.Session()
+
+def get_random_headers():
+    return {
+        "User-Agent": random.choice(USER_AGENTS),
+        "Referer": "http://fund.eastmoney.com/",
+        "Connection": "keep-alive"
+    }
+
+# --- CACHE SYSTEMS ---
+
+class GlobalEstimateCache:
+    """
+    全局估值缓存。
+    多用户场景下的核心优化：
+    如果 User A 获取了 001618 的数据，User B 在 60秒内也请求该基金，
+    直接返回内存数据，不请求第三方接口。防封禁，秒响应。
+    """
+    def __init__(self, ttl_seconds=60):
+        self.cache = {} # {code: {data: dict, expire: timestamp}}
+        self.ttl = ttl_seconds
+
+    def get(self, code):
+        now = time_module.time()
+        if code in self.cache:
+            entry = self.cache[code]
+            if now < entry['expire']:
+                return entry['data']
+            else:
+                del self.cache[code]
+        return None
+
+    def set(self, code, data):
+        # 只有获取到有效数据才缓存
+        if data and data.get('gsz') != "0":
+            self.cache[code] = {
+                'data': data,
+                'expire': time_module.time() + self.ttl
+            }
+
+estimate_cache = GlobalEstimateCache(ttl_seconds=60)
+
 class DataCache:
     def __init__(self):
         self.funds_df = pd.DataFrame()
-        self.funds_search_cache = [] # Optimized list of dicts for fast search
+        self.funds_search_cache = [] 
         self.funds_list_time = None
         self.holdings = {}
 
@@ -78,31 +130,22 @@ def _get_current_china_time():
     return datetime.utcnow() + timedelta(hours=8)
 
 def _get_time_phase():
-    """
-    Returns: 'PRE_MARKET' | 'MARKET' | 'LUNCH_BREAK' | 'POST_MARKET' | 'WEEKEND'
-    """
     now = _get_current_china_time()
-    
     if now.weekday() >= 5: return 'WEEKEND'
-    
     t = now.time()
-    if t < time(9, 30): 
-        return 'PRE_MARKET'
-    elif t >= time(11, 30) and t < time(13, 0):
-        return 'LUNCH_BREAK'
-    elif t <= time(15, 0): 
-        return 'MARKET'
-    else: 
-        return 'POST_MARKET'
+    if t < time(9, 30): return 'PRE_MARKET'
+    elif t >= time(11, 30) and t < time(13, 0): return 'LUNCH_BREAK'
+    elif t <= time(15, 0): return 'MARKET'
+    else: return 'POST_MARKET'
 
 def _get_current_china_date_str():
     return _get_current_china_time().strftime('%Y-%m-%d')
 
-# --- DATA FETCHING (Blocking Wrappers) ---
+# --- DATA FETCHING (Optimized) ---
 
 def _fetch_akshare_history_sync(code: str):
     try:
-        # 只取最近一年的数据，减少网络传输和内存占用
+        # Akshare 内部使用了 requests，这里无法直接注入 Session，但 akshare 调用频率较低，主要用于详情页
         df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
         if not df.empty:
             if '净值日期' in df.columns: df['净值日期'] = df['净值日期'].astype(str)
@@ -112,56 +155,61 @@ def _fetch_akshare_history_sync(code: str):
     return pd.DataFrame()
 
 def _fetch_official_estimate_sync(code: str):
-    """Fetch real-time estimate from Eastmoney JS interface"""
+    """
+    Optimized fetch with Session reuse and Global Cache check.
+    """
+    # 1. Check Global Cache first
+    cached_data = estimate_cache.get(code)
+    if cached_data:
+        # Logger debug removed to reduce IO
+        return cached_data
+
+    # 2. Fetch from remote
     data = { "gsz": "0", "gszzl": "0", "dwjz": "0", "jzrq": "", "name": "", "source": "official" }
     try:
         timestamp = int(datetime.now().timestamp() * 1000)
         url = f"http://fundgz.1234567.com.cn/js/gszzl_{code}.js?rt={timestamp}"
-        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=1.5)
+        
+        # Use Global Session
+        resp = global_session.get(url, headers=get_random_headers(), timeout=2.0)
+        
         match = re.search(r'jsonpgz\((.*?)\);', resp.text)
         if match:
             fetched = json.loads(match.group(1))
-            if fetched: data.update(fetched)
-    except: pass
+            if fetched: 
+                data.update(fetched)
+                # 3. Save to Global Cache
+                estimate_cache.set(code, data)
+    except Exception as e: 
+        # logger.warning(f"Fetch estimate error {code}: {e}")
+        pass
     return data
 
 def _parse_quarter_rank(q_str):
-    """
-    解析季度字符串，返回一个可排序的整数 rank。
-    格式如：2024年4季度 -> 202404
-    """
     if not isinstance(q_str, str): return 0
     try:
-        # 匹配 20xx年x季度
         match = re.search(r'(\d{4})年.*?(\d)季度', q_str)
         if match:
             year = int(match.group(1))
             quarter = int(match.group(2))
             return year * 100 + quarter
         
-        # 备用匹配：可能没有'第'或者其他格式
-        # 简单匹配年份
         match_year = re.search(r'(\d{4})年', q_str)
         if match_year:
             year = int(match_year.group(1))
-            # 如果是“年报”，当作第4季度
-            if '年报' in q_str or '年度' in q_str:
-                return year * 100 + 4
-            # 如果是“中报”，当作第2季度
-            if '中报' in q_str:
-                return year * 100 + 2
-            return year * 100 + 1 # 默认
-    except:
-        pass
+            if '年报' in q_str or '年度' in q_str: return year * 100 + 4
+            if '中报' in q_str: return year * 100 + 2
+            return year * 100 + 1
+    except: pass
     return 0
 
 def _fetch_holdings_sync(code: str):
     try:
         current_year = datetime.now().year
         all_dfs = []
-        # 获取今年和去年的数据
         for year in [current_year, current_year - 1]:
             try:
+                # Akshare fetch
                 df = ak.fund_portfolio_hold_em(symbol=code, date=year)
                 if not df.empty and '季度' in df.columns:
                     all_dfs.append(df)
@@ -172,21 +220,13 @@ def _fetch_holdings_sync(code: str):
         combined_df = pd.concat(all_dfs)
         if combined_df.empty: return []
 
-        # 计算排序 Rank
-        # 这里的关键是：直接给 DataFrame 每一行加上 Rank，而不是先取 unique 季度再筛选
-        # 这样能避免字符串匹配回填时的错位
         combined_df['rank'] = combined_df['季度'].apply(_parse_quarter_rank)
         combined_df['占净值比例'] = pd.to_numeric(combined_df['占净值比例'], errors='coerce').fillna(0)
-        
-        # 排序：先按季度 Rank 降序 (最新的在最前)，再按占比降序
         sorted_df = combined_df.sort_values(by=['rank', '占净值比例'], ascending=[False, False])
         
         if sorted_df.empty: return []
 
-        # 获取最大的 rank (即最新的季度)
         latest_rank = sorted_df.iloc[0]['rank']
-        
-        # 只保留最新季度的数据
         latest_df = sorted_df[sorted_df['rank'] == latest_rank].head(10)
         
         holdings = []
@@ -202,13 +242,12 @@ def _fetch_holdings_sync(code: str):
         return []
 
 def _fetch_stock_quotes_sync(stock_codes: list):
-    """Batch fetch stock quotes"""
+    """Batch fetch stock quotes with Session"""
     if not stock_codes: return {}
     unique_codes = list(set(stock_codes))
-    batch_size = 30 
+    batch_size = 40 # Increased batch size slightly
     quotes = {}
-    headers = {"User-Agent": "Mozilla/5.0", "Referer": "http://quote.eastmoney.com/"}
-
+    
     for i in range(0, len(unique_codes), batch_size):
         batch = unique_codes[i:i + batch_size]
         secids = []
@@ -218,7 +257,8 @@ def _fetch_stock_quotes_sync(stock_codes: list):
         
         url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f3,f12&secids={','.join(secids)}"
         try:
-            resp = requests.get(url, headers=headers, timeout=2.5)
+            # Use Global Session
+            resp = global_session.get(url, headers=get_random_headers(), timeout=3.0)
             data = resp.json()
             if data and 'data' in data and 'diff' in data['data']:
                 for item in data['data']['diff']:
@@ -232,6 +272,7 @@ def _fetch_stock_quotes_sync(stock_codes: list):
 
 async def _fetch_fund_base_data_concurrently(code: str):
     loop = asyncio.get_running_loop()
+    # Estimate fetch is now super fast due to caching + session
     official_task = loop.run_in_executor(None, _fetch_official_estimate_sync, code)
     history_task = loop.run_in_executor(None, _fetch_akshare_history_sync, code)
     official_data, history_df = await asyncio.gather(official_task, history_task)
@@ -248,7 +289,6 @@ async def search_funds_api(key: str = Query(..., min_length=1)):
     try:
         funds_list = await data_cache.get_funds_search_list()
         if not funds_list: return []
-        
         key = key.upper()
         results = []
         count = 0
@@ -268,7 +308,7 @@ async def get_market_indices(codes: str = Query(None)):
     secids = ",".join(target_codes)
     url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f3,f12,f14,f2&secids={secids}"
     try:
-        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
+        resp = global_session.get(url, headers=get_random_headers(), timeout=3)
         data = resp.json()
         result = []
         if data and 'data' in data and 'diff' in data['data']:
@@ -291,6 +331,9 @@ async def get_estimate_api(code: str):
 @app.post("/api/estimate/batch")
 async def get_batch_estimate(codes: List[str] = Body(..., embed=True)):
     if not codes: return []
+    
+    # 显著优化：先检查缓存，缓存未命中的才去请求，请求后存入缓存
+    # _fetch_official_estimate_sync 内部已经集成了缓存逻辑
     
     tasks = [_fetch_fund_base_data_concurrently(code) for code in codes]
     base_results = await asyncio.gather(*tasks)
@@ -321,7 +364,7 @@ async def get_batch_estimate(codes: List[str] = Body(..., embed=True)):
             if len(history_df) >= 2:
                 prev = float(history_df.iloc[-2]['单位净值'])
                 if prev > 0:
-                    res['gszzl'] = "{:.4f}".format(((last_nav - prev)/prev)*100) # PRECISION FIX
+                    res['gszzl'] = "{:.4f}".format(((last_nav - prev)/prev)*100)
             else:
                 res['gszzl'] = "0.00"
             res['source'] = 'real_history'
@@ -339,7 +382,7 @@ async def get_batch_estimate(codes: List[str] = Body(..., embed=True)):
                  
                  if prev > 0:
                      res['gsz'] = str(curr)
-                     res['gszzl'] = "{:.4f}".format(((curr - prev)/prev)*100) # PRECISION FIX
+                     res['gszzl'] = "{:.4f}".format(((curr - prev)/prev)*100)
                      res['source'] = "real_updated"
              else:
                  need_calc = True
@@ -400,7 +443,6 @@ async def get_batch_estimate(codes: List[str] = Body(..., embed=True)):
             
             est_nav = last_nav * (1 + est_change_pct / 100.0)
             data['gsz'] = "{:.4f}".format(est_nav)
-            # PRECISION FIX: 4 Decimal Places
             data['gszzl'] = "{:.4f}".format(est_change_pct)
             data['source'] = "holdings_calc_batch"
 
@@ -416,6 +458,8 @@ async def get_fund_detail(code: str):
     try:
         manager_name = "暂无"
         try:
+             # Fund Manager info usually changes rarely, could benefit from caching too, 
+             # but akshare manages internal requests.
              m_df = await run_in_threadpool(ak.fund_manager_em, symbol=code)
              if not m_df.empty: manager_name = m_df.iloc[-1]['姓名']
         except: pass

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Fund, Group } from '../types';
-import { RefreshCw, LayoutDashboard, ChevronRight, Zap, Clock, Sun, Moon, Coffee } from 'lucide-react';
+import { RefreshCw, LayoutDashboard, ChevronRight, Zap, Clock, Moon, Coffee } from 'lucide-react';
 
 interface DashboardProps {
   funds: Fund[];
@@ -10,6 +10,7 @@ interface DashboardProps {
   totalMarketValue: number;
   lastUpdate: Date;
   isRefreshing?: boolean;
+  isPrivacyMode: boolean; // 新增隐私模式属性
   onRefresh: () => void;
   onAnalyze: (fund: Fund) => void;
   onFundClick: (fund: Fund) => void;
@@ -17,12 +18,11 @@ interface DashboardProps {
   onManageGroups: () => void;
 }
 
-const formatMoney = (val: number) => {
+// 修改 formatMoney 支持隐私模式
+const formatMoney = (val: number, isHidden: boolean) => {
+  if (isHidden) return '****';
   return val.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
-
-// Colors
-const SUMMARY_COLORS = ['#2563eb', '#ef4444', '#f59e0b', '#22c55e', '#6366f1', '#ec4899'];
 
 // Skeleton Component
 const Skeleton = ({ className }: { className: string }) => (
@@ -76,7 +76,7 @@ const MarketStatus = () => {
 };
 
 export const Dashboard: React.FC<DashboardProps> = ({ 
-    funds, groups, currentGroupId, totalProfit, totalMarketValue, lastUpdate, isRefreshing,
+    funds, groups, currentGroupId, totalProfit, totalMarketValue, lastUpdate, isRefreshing, isPrivacyMode,
     onRefresh, onAnalyze, onFundClick, onGroupChange, onManageGroups
 }) => {
   const [viewMode, setViewMode] = useState<'FUNDS' | 'SUMMARY'>('FUNDS');
@@ -211,8 +211,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
             
             <div className="text-3xl font-black mb-5 tracking-tight flex items-baseline gap-1 min-h-[40px]">
-                <span className="text-lg font-normal opacity-80">¥</span>
-                {isRefreshing ? <Skeleton className="h-8 w-40 bg-white/20" /> : formatMoney(totalMarketValue)}
+                <span className="text-lg font-normal opacity-80">{isPrivacyMode ? '' : '¥'}</span>
+                {isRefreshing ? <Skeleton className="h-8 w-40 bg-white/20" /> : formatMoney(totalMarketValue, isPrivacyMode)}
             </div>
 
             <div className="grid grid-cols-2 gap-3 bg-black/10 rounded-lg p-3 backdrop-blur-sm border border-white/5">
@@ -220,7 +220,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     <div className="text-white/70 text-[10px] mb-1">今日预估盈亏</div>
                     <div className={`text-base font-bold flex items-center ${totalProfit >= 0 ? 'text-red-300' : 'text-green-300'}`}>
                     {isRefreshing ? <Skeleton className="h-5 w-20 bg-white/20" /> : (
-                        <>{totalProfit > 0 ? '+' : ''}{formatMoney(totalProfit)}</>
+                        <>{!isPrivacyMode && totalProfit > 0 ? '+' : ''}{formatMoney(totalProfit, isPrivacyMode)}</>
                     )}
                     </div>
                 </div>
@@ -228,7 +228,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     <div className="text-white/70 text-[10px] mb-1">累计持有收益</div>
                     <div className={`text-base font-bold flex justify-end ${displayTotalReturn >= 0 ? 'text-red-300' : 'text-green-300'}`}>
                     {isRefreshing ? <Skeleton className="h-5 w-20 bg-white/20" /> : (
-                        <>{displayTotalReturn > 0 ? '+' : ''}{formatMoney(displayTotalReturn)}</>
+                        <>{!isPrivacyMode && displayTotalReturn > 0 ? '+' : ''}{formatMoney(displayTotalReturn, isPrivacyMode)}</>
                     )}
                     </div>
                 </div>
@@ -265,18 +265,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <div className="grid grid-cols-3 gap-2 pl-2">
                       <div className="col-span-1">
                           <div className="text-[10px] text-slate-400 mb-0.5">资产</div>
-                          <div className="text-xs font-bold text-slate-800 dark:text-slate-100">{formatMoney(group.marketValue)}</div>
+                          <div className="text-xs font-bold text-slate-800 dark:text-slate-100">{formatMoney(group.marketValue, isPrivacyMode)}</div>
                       </div>
                       <div className="col-span-1 text-center">
                           <div className="text-[10px] text-slate-400 mb-0.5">今日</div>
                           <div className={`text-xs font-bold ${group.todayProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                              {group.todayProfit > 0 ? '+' : ''}{group.todayProfit.toFixed(0)}
+                              {!isPrivacyMode && group.todayProfit > 0 ? '+' : ''}{isPrivacyMode ? '****' : group.todayProfit.toFixed(0)}
                           </div>
                       </div>
                       <div className="col-span-1 text-right">
                           <div className="text-[10px] text-slate-400 mb-0.5">累计</div>
                           <div className={`text-xs font-bold ${group.totalReturn >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                              {group.totalReturn > 0 ? '+' : ''}{group.totalReturn.toFixed(0)}
+                              {!isPrivacyMode && group.totalReturn > 0 ? '+' : ''}{isPrivacyMode ? '****' : group.totalReturn.toFixed(0)}
                           </div>
                       </div>
                   </div>
@@ -339,14 +339,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     <div className="col-span-1">
                         <div className="text-[10px] text-slate-400 mb-0.5">持仓金额</div>
                         <div className="text-xs font-bold text-slate-700 dark:text-slate-200">
-                            {isRefreshing ? <Skeleton className="h-4 w-16" /> : formatMoney(marketValue)}
+                            {isRefreshing ? <Skeleton className="h-4 w-16" /> : formatMoney(marketValue, isPrivacyMode)}
                         </div>
                     </div>
                     <div className="col-span-1 text-center border-l border-slate-50 dark:border-slate-800">
                         <div className="text-[10px] text-slate-400 mb-0.5">当日盈亏</div>
                         <div className={`text-xs font-bold ${fund.estimatedProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>
                             {isRefreshing ? <Skeleton className="h-4 w-12 mx-auto" /> : (
-                                <>{fund.estimatedProfit > 0 ? '+' : ''}{fund.estimatedProfit.toFixed(2)}</>
+                                <>{!isPrivacyMode && fund.estimatedProfit > 0 ? '+' : ''}{isPrivacyMode ? '****' : fund.estimatedProfit.toFixed(2)}</>
                             )}
                         </div>
                     </div>
@@ -354,7 +354,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         <div className="text-[10px] text-slate-400 mb-0.5">持有盈亏</div>
                         <div className={`text-xs font-bold ${totalReturn >= 0 ? 'text-up-red' : 'text-down-green'}`}>
                             {isRefreshing ? <Skeleton className="h-4 w-12 ml-auto" /> : (
-                                <>{totalReturn > 0 ? '+' : ''}{totalReturn.toFixed(2)}</>
+                                <>{!isPrivacyMode && totalReturn > 0 ? '+' : ''}{isPrivacyMode ? '****' : totalReturn.toFixed(2)}</>
                             )}
                         </div>
                     </div>
@@ -367,3 +367,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
     </div>
   );
 };
+
+// Summary Colors for the bars
+const SUMMARY_COLORS = ['#2563eb', '#ef4444', '#f59e0b', '#22c55e', '#6366f1', '#ec4899'];

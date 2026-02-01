@@ -13,13 +13,14 @@ import { TransactionModal } from './components/TransactionModal';
 import { AIChat } from './components/AIChat';
 import { Watchlist } from './components/Watchlist';
 import { MarketConfigModal } from './components/MarketConfigModal';
-import { LayoutGrid, PieChart, Settings, Bot, Plus, LineChart, Loader2, Users, X, Check, Moon, Sun, Monitor, Download, Upload, Copy, PenTool, Eye } from 'lucide-react';
+import { LayoutGrid, PieChart, Settings, Bot, Plus, LineChart, Loader2, Users, X, Check, Moon, Sun, Monitor, Download, Upload, Copy, PenTool, Eye, EyeOff, Key, Clipboard, ClipboardPaste } from 'lucide-react';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabView>(TabView.DASHBOARD);
   
-  // Theme State
+  // Theme & Privacy State
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system');
+  const [isPrivacyMode, setIsPrivacyMode] = useState(false);
 
   // Data State
   const [funds, setFunds] = useState<Fund[]>([]);
@@ -44,10 +45,11 @@ const App: React.FC = () => {
   const [isMarketConfigOpen, setIsMarketConfigOpen] = useState(false); // New: Market Config
   const [newGroupName, setNewGroupName] = useState('');
   
-  // Backup UI State
-  const [showExport, setShowExport] = useState(false);
-  const [exportString, setExportString] = useState('');
-  const [importString, setImportString] = useState('');
+  // Settings & Backup UI State
+  const [userApiKey, setUserApiKey] = useState('');
+  // Import Text Modal
+  const [isImportTextOpen, setIsImportTextOpen] = useState(false);
+  const [importTextContent, setImportTextContent] = useState('');
 
   // Transaction Modal State
   const [transactionModal, setTransactionModal] = useState<{ isOpen: boolean, fund: Fund | null, type: TransactionType }>({
@@ -79,6 +81,26 @@ const App: React.FC = () => {
         root.classList.add(theme);
     }
   }, [theme]);
+
+  // Load User Settings
+  useEffect(() => {
+    const storedKey = localStorage.getItem('smartfund_user_gemini_key');
+    if (storedKey) setUserApiKey(storedKey);
+    
+    const storedPrivacy = localStorage.getItem('smartfund_privacy_mode');
+    if (storedPrivacy === 'true') setIsPrivacyMode(true);
+  }, []);
+
+  const togglePrivacy = () => {
+      const newVal = !isPrivacyMode;
+      setIsPrivacyMode(newVal);
+      localStorage.setItem('smartfund_privacy_mode', String(newVal));
+  };
+
+  const saveUserApiKey = (val: string) => {
+      setUserApiKey(val);
+      localStorage.setItem('smartfund_user_gemini_key', val);
+  };
 
   // Memoized Filters
   // Performance: Only recalculate when funds or currentGroupId changes
@@ -208,21 +230,63 @@ const App: React.FC = () => {
       fetchMarketIndices(codes).then(setSectorIndices);
   };
 
-  // --- Backup Handlers ---
-  const handleGenerateBackup = () => {
-      const str = exportData();
-      setExportString(str);
-      setShowExport(true);
+  // --- File Backup Handlers ---
+  const handleDownloadBackup = () => {
+      const jsonStr = exportData();
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `smartfund_backup_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
   };
 
-  const handleImportBackup = () => {
-      if (!importString) return;
-      const success = importData(importString);
-      if (success) {
-          alert("数据导入成功！页面将刷新。");
-          window.location.reload();
-      } else {
-          alert("数据格式错误，导入失败。");
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+          const content = event.target?.result as string;
+          if (content) {
+              const success = importData(content);
+              if (success) {
+                  alert('数据导入成功，页面将刷新');
+                  window.location.reload();
+              } else {
+                  alert('文件格式错误');
+              }
+          }
+      };
+      reader.readAsText(file);
+  };
+  
+  // --- String Copy/Paste Backup Handlers ---
+  const handleCopyToClipboard = () => {
+      const jsonStr = exportData();
+      navigator.clipboard.writeText(jsonStr).then(() => {
+          alert("配置数据已复制到剪贴板！\n您可以发送给朋友或保存到备忘录。");
+      }).catch(err => {
+          console.error("Copy failed", err);
+          alert("复制失败，请尝试使用导出文件功能。");
+      });
+  };
+
+  const handlePasteImport = () => {
+      try {
+          const success = importData(importTextContent);
+          if (success) {
+              alert("数据导入成功，页面即将刷新！");
+              window.location.reload();
+          } else {
+              alert("数据格式无效，请检查复制的内容。");
+          }
+      } catch (e) {
+          alert("解析错误");
       }
   };
 
@@ -301,11 +365,17 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans pb-20 max-w-md mx-auto shadow-2xl relative overflow-hidden transition-colors">
       {/* Header */}
       <header className="bg-white dark:bg-slate-900 px-4 pt-10 pb-3 sticky top-0 z-10 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center transition-colors">
-        <div>
-           <h1 className="text-xl font-black text-slate-800 dark:text-white tracking-tight flex items-center gap-1">
-             Smart<span className="text-blue-600">Fund</span>
-           </h1>
-           <p className="text-[10px] text-slate-400 font-medium tracking-wide">AI 驱动的智能养基助手</p>
+        <div className="flex items-center gap-2">
+            <div>
+                <h1 className="text-xl font-black text-slate-800 dark:text-white tracking-tight flex items-center gap-1">
+                    Smart<span className="text-blue-600">Fund</span>
+                </h1>
+                <p className="text-[10px] text-slate-400 font-medium tracking-wide">AI 驱动的智能养基助手</p>
+            </div>
+            {/* Privacy Toggle */}
+            <button onClick={togglePrivacy} className="text-slate-400 hover:text-slate-600 ml-2">
+                {isPrivacyMode ? <EyeOff size={16}/> : <Eye size={16}/>}
+            </button>
         </div>
         <button 
             onClick={openAddModal}
@@ -326,6 +396,7 @@ const App: React.FC = () => {
                 totalMarketValue={totalMarketValue}
                 lastUpdate={lastUpdate}
                 isRefreshing={isRefreshing}
+                isPrivacyMode={isPrivacyMode}
                 onRefresh={handleRefresh}
                 onAnalyze={handleAnalyze}
                 onFundClick={(fund) => setSelectedFund(fund)}
@@ -388,13 +459,15 @@ const App: React.FC = () => {
         )}
 
         {activeTab === TabView.AI_INSIGHTS && (
-             <AIChat apiKey={process.env.API_KEY} />
+             <AIChat apiKey={userApiKey} />
         )}
         
         {activeTab === TabView.SETTINGS && (
             <div className="p-6">
                 <h2 className="text-xl font-bold mb-4 dark:text-white">设置</h2>
                 <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 divide-y divide-slate-50 dark:divide-slate-800">
+                    
+                    {/* Appearance */}
                     <div className="p-4 flex justify-between items-center">
                         <span>外观模式</span>
                         <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
@@ -419,26 +492,63 @@ const App: React.FC = () => {
                         </div>
                     </div>
                     
+                    {/* API Key */}
+                    <div className="p-4">
+                        <div className="flex items-center gap-2 mb-2">
+                            <Key size={16} className="text-blue-500"/>
+                            <span className="font-bold text-sm">Gemini API Key</span>
+                        </div>
+                        <input 
+                            type="password"
+                            value={userApiKey}
+                            onChange={(e) => saveUserApiKey(e.target.value)}
+                            placeholder="在此输入您的 Key 以使用 AI 分析..."
+                            className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                        />
+                        <p className="text-[10px] text-slate-400 mt-1">
+                            Key 将仅存储在本地浏览器中。如不填则使用默认公共 Key (额度有限)。
+                        </p>
+                    </div>
+
                     {/* Backup Section */}
                     <div className="p-4">
                         <div className="flex justify-between items-center mb-2">
-                             <span>数据备份与还原</span>
-                             <span className="text-xs text-orange-500 font-bold bg-orange-50 dark:bg-orange-900/20 px-2 py-0.5 rounded">手动同步</span>
+                             <span className="font-bold text-slate-700 dark:text-slate-200">数据备份与恢复</span>
                         </div>
-                        <div className="grid grid-cols-2 gap-3 mt-3">
+                        
+                        {/* File Ops */}
+                        <div className="grid grid-cols-2 gap-3 mt-2 mb-4">
                             <button 
-                                onClick={handleGenerateBackup}
-                                className="bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2"
+                                onClick={handleDownloadBackup}
+                                className="bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition hover:bg-slate-100"
                             >
-                                <Download size={16}/> 导出数据
+                                <Download size={14}/> 导出文件
+                            </button>
+                            <label className="bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition hover:bg-slate-100">
+                                <Upload size={14}/> 导入文件
+                                <input type="file" accept=".json" onChange={handleFileUpload} className="hidden" />
+                            </label>
+                        </div>
+                        
+                        {/* String Ops */}
+                        <div className="grid grid-cols-2 gap-3">
+                            <button 
+                                onClick={handleCopyToClipboard}
+                                className="bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition hover:bg-blue-100"
+                            >
+                                <Clipboard size={14}/> 复制数据
                             </button>
                             <button 
-                                onClick={() => setShowExport(true)}
-                                className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 py-2 rounded-lg text-sm font-bold flex items-center justify-center gap-2"
+                                onClick={() => setIsImportTextOpen(true)}
+                                className="bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 py-2 rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition hover:bg-indigo-100"
                             >
-                                <Upload size={16}/> 导入数据
+                                <ClipboardPaste size={14}/> 粘贴导入
                             </button>
                         </div>
+                        
+                        <p className="text-[10px] text-slate-400 mt-2">
+                            支持导出文件或直接复制数据文本，方便在不同设备/朋友间同步。
+                        </p>
                     </div>
 
                     <div className="p-4 flex justify-between items-center">
@@ -456,53 +566,33 @@ const App: React.FC = () => {
                         </button>
                     </div>
                 </div>
-                <p className="text-xs text-slate-400 mt-4 text-center">SmartFund Pro v2.3</p>
+                <p className="text-xs text-slate-400 mt-4 text-center">SmartFund Pro v2.5 (High Performance)</p>
             </div>
         )}
       </main>
 
-      {/* Backup Modal */}
-      {showExport && (
-          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
-              <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowExport(false)}></div>
-              <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-2xl p-6 z-10 shadow-2xl animate-scale-in">
-                  <div className="flex justify-between items-center mb-4">
-                      <h3 className="font-bold text-lg dark:text-white">{exportString ? '导出数据' : '导入数据'}</h3>
-                      <button onClick={() => {setShowExport(false); setExportString(''); setImportString('');}}><X size={20} className="text-slate-400"/></button>
-                  </div>
-                  
-                  {exportString ? (
-                      <>
-                        <p className="text-sm text-slate-500 mb-3">复制下方代码，发送到微信或保存为文本文件。在另一台设备上粘贴即可恢复数据。</p>
-                        <div className="bg-slate-100 dark:bg-slate-800 p-3 rounded-lg break-all text-xs font-mono h-32 overflow-y-auto mb-3 select-all dark:text-slate-300">
-                            {exportString}
-                        </div>
-                        <button 
-                            onClick={() => {navigator.clipboard.writeText(exportString); alert('已复制到剪贴板');}}
-                            className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold flex items-center justify-center gap-2"
-                        >
-                            <Copy size={18} /> 复制备份码
-                        </button>
-                      </>
-                  ) : (
-                      <>
-                        <p className="text-sm text-slate-500 mb-3">请将之前的备份码粘贴到下方：</p>
-                        <textarea
-                            value={importString}
-                            onChange={e => setImportString(e.target.value)}
-                            className="w-full h-32 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 text-xs font-mono mb-4 focus:ring-2 focus:ring-blue-500 outline-none dark:text-white"
-                            placeholder='{"funds": [...]}'
-                        ></textarea>
-                        <button 
-                            onClick={handleImportBackup}
-                            disabled={!importString}
-                            className="w-full py-3 bg-green-600 text-white rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50"
-                        >
-                            <Check size={18} /> 确认导入
-                        </button>
-                      </>
-                  )}
-              </div>
+      {/* Import Text Modal */}
+      {isImportTextOpen && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setIsImportTextOpen(false)}></div>
+            <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-2xl shadow-2xl z-10 p-6 animate-scale-in">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="font-bold text-lg dark:text-white">粘贴导入数据</h3>
+                    <button onClick={() => setIsImportTextOpen(false)}><X size={20} className="text-slate-400"/></button>
+                </div>
+                <textarea 
+                    value={importTextContent}
+                    onChange={(e) => setImportTextContent(e.target.value)}
+                    placeholder="在此粘贴导出的数据 JSON 字符串..."
+                    className="w-full h-32 p-3 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none mb-4 dark:text-white resize-none"
+                />
+                <button 
+                    onClick={handlePasteImport}
+                    className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl shadow-lg active:scale-95 transition"
+                >
+                    确认导入
+                </button>
+            </div>
           </div>
       )}
 

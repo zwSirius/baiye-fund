@@ -1,17 +1,24 @@
 import { GoogleGenAI } from "@google/genai";
 import { Fund } from "../types";
 
-// 警告：在实际生产中，不要在前端直接暴露 API Key。
-// 此处仅为演示目的。process.env.API_KEY 会被 Vite 在构建时替换为字符串常量，
-// 所以这里不需要担心 process 未定义的问题。
-const apiKey = process.env.API_KEY || ''; 
-const ai = new GoogleGenAI({ apiKey });
+export const getGeminiKey = (): string => {
+    // 1. 优先读取用户在设置里配置的 Key
+    const userKey = localStorage.getItem('smartfund_user_gemini_key');
+    if (userKey) return userKey;
+
+    // 2. 其次读取环境变量 (构建时注入的默认 Key)
+    // 注意：如果是分享给朋友，建议不要在 .env 中放入敏感 Key，或者提示他们必须填自己的
+    return process.env.API_KEY || '';
+};
 
 export const analyzeFund = async (fund: Fund): Promise<string> => {
+  const apiKey = getGeminiKey();
+  
   if (!apiKey) {
-    return "API Key 未配置，无法生成 AI 报告。请在 metadata.json 或环境变量中配置。";
+    return "请在【设置】页面配置您的 Google Gemini API Key 即可使用智能分析服务。";
   }
 
+  const ai = new GoogleGenAI({ apiKey });
   const model = "gemini-3-flash-preview";
 
   const prompt = `
@@ -39,6 +46,6 @@ export const analyzeFund = async (fund: Fund): Promise<string> => {
     return response.text || "暂时无法生成报告。";
   } catch (error) {
     console.error("Gemini API Error:", error);
-    return "AI 分析服务暂时不可用，请稍后再试。";
+    return "AI 分析服务暂时不可用，可能是 API Key 无效或网络问题。";
   }
 };

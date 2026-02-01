@@ -27,14 +27,23 @@ export const AIChat: React.FC<AIChatProps> = ({ apiKey }) => {
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Check Auth on Mount
+  // Check Auth on Mount or when API Key changes
   useEffect(() => {
+    // 1. 如果用户在设置里填了自己的 Key，直接免登录
+    if (apiKey && apiKey.trim() !== '') {
+        setIsAuthenticated(true);
+        return;
+    }
+
+    // 2. 否则检查本地缓存的登录状态 (每日有效)
     const today = new Date().toDateString();
     const storedAuthDate = localStorage.getItem('smartfund_ai_auth_date');
     if (storedAuthDate === today) {
         setIsAuthenticated(true);
+    } else {
+        setIsAuthenticated(false);
     }
-  }, []);
+  }, [apiKey]);
 
   const handleLogin = () => {
       if (username === 'luoxin1997' && password === 'luoxin9707') {
@@ -69,14 +78,16 @@ export const AIChat: React.FC<AIChatProps> = ({ apiKey }) => {
     setIsLoading(true);
 
     try {
-      // 如果没有 API Key，使用模拟回复
-      if (!apiKey && process.env.NODE_ENV !== 'production') {
-         // Fallback mock response for demo without key
+      // 如果没有 API Key，且不是生产环境，显示模拟回复 (防止开发时报错)
+      // 注意：这里的 apiKey || process.env.API_KEY 确保了如果有自己的 Key 用自己的，没有则尝试用公共的
+      const effectiveKey = apiKey || process.env.API_KEY || '';
+      
+      if (!effectiveKey && process.env.NODE_ENV !== 'production') {
          setTimeout(() => {
             const mockResponse: ChatMessage = {
                 id: (Date.now() + 1).toString(),
                 role: 'model',
-                text: "由于未配置真实的 Gemini API Key，这是一个模拟回复。\n\n在真实环境中，我会根据您的提问：**“" + userMsg.text + "”** 进行深度分析。"
+                text: "由于未配置 Key，这是模拟回复。请在【设置】中配置 Key 或确保环境变量已注入。"
             };
             setMessages(prev => [...prev, mockResponse]);
             setIsLoading(false);
@@ -84,7 +95,7 @@ export const AIChat: React.FC<AIChatProps> = ({ apiKey }) => {
          return;
       }
 
-      const ai = new GoogleGenAI({ apiKey: apiKey || process.env.API_KEY || '' });
+      const ai = new GoogleGenAI({ apiKey: effectiveKey });
       const model = "gemini-3-flash-preview";
       
       const response = await ai.models.generateContent({
@@ -110,7 +121,7 @@ export const AIChat: React.FC<AIChatProps> = ({ apiKey }) => {
       setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
         role: 'model',
-        text: "网络连接异常，请稍后再试。"
+        text: "网络连接异常，请检查 Key 是否有效或稍后再试。"
       }]);
     } finally {
       setIsLoading(false);
@@ -124,8 +135,12 @@ export const AIChat: React.FC<AIChatProps> = ({ apiKey }) => {
                   <div className="w-16 h-16 bg-indigo-100 dark:bg-indigo-900/30 rounded-full flex items-center justify-center mx-auto mb-4 text-indigo-600 dark:text-indigo-400">
                       <Lock size={32} />
                   </div>
-                  <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-2">AI 助手安全验证</h2>
-                  <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">为了保障服务质量，每日首次使用需验证身份</p>
+                  <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-2">AI 助手权限验证</h2>
+                  <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">
+                      使用公共内置通道需每日验证。
+                      <br/>
+                      <span className="text-indigo-500 font-bold">提示：在【设置】填入您自己的 Key 可直接免密使用。</span>
+                  </p>
 
                   <div className="space-y-4 text-left">
                       <div>
@@ -174,7 +189,13 @@ export const AIChat: React.FC<AIChatProps> = ({ apiKey }) => {
         <div className="bg-white dark:bg-slate-900 p-4 shadow-sm border-b border-slate-100 dark:border-slate-800 flex items-center gap-2 sticky top-0 z-10">
             <Sparkles className="text-indigo-500" size={20} />
             <h2 className="font-bold text-slate-800 dark:text-white text-sm">AI 投资顾问</h2>
-            <span className="text-[10px] text-green-500 bg-green-50 dark:bg-green-900/20 px-2 py-0.5 rounded-full">已认证</span>
+            {apiKey ? (
+                 <span className="text-[10px] text-blue-500 bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded-full flex items-center gap-1">
+                     <Key size={10} /> 私有通道
+                 </span>
+            ) : (
+                 <span className="text-[10px] text-green-500 bg-green-50 dark:bg-green-900/20 px-2 py-0.5 rounded-full">公共通道已认证</span>
+            )}
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50 dark:bg-slate-950">
