@@ -277,7 +277,20 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
             name = realData.name;
         }
 
-        const profitToday = (estimatedNav - lastNav) * fund.holdingShares;
+        // --- 核心修复：当日盈亏计算逻辑 ---
+        let profitToday = (estimatedNav - lastNav) * fund.holdingShares;
+
+        // 特殊情况处理：
+        // 如果是在非交易时间（如周末或节假日），后端返回的 dwjz (昨日净值) 和 gsz (估值) 往往是相等的（都是上个交易日收盘价）。
+        // 此时直接相减会导致 profitToday 为 0。
+        // 但此时我们希望看到的是“上一个交易日”的盈亏情况，即利用 涨跌幅 反推。
+        if (Math.abs(profitToday) < 0.01 && Math.abs(estimatedChangePercent) > 0.001) {
+            // 利用公式：当前市值 = 上日市值 * (1 + 涨跌幅%)
+            // 故：当日盈亏 = 当前市值 - (当前市值 / (1 + 涨跌幅%))
+            const currentMarketValue = estimatedNav * fund.holdingShares;
+            const prevMarketValue = currentMarketValue / (1 + estimatedChangePercent / 100);
+            profitToday = currentMarketValue - prevMarketValue;
+        }
 
         return {
             ...fund,
