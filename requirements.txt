@@ -1,8 +1,5 @@
 fastapi
 uvicorn
-akshare
 pandas
 requests
-lxml
-beautifulsoup4
-scikit-learn
+akshare

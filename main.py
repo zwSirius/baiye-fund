@@ -18,7 +18,7 @@ from typing import List, Dict, Any
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="SmartFund API", description="High Performance Fund Data API")
+app = FastAPI(title="SmartFund API", description="High Performance Fund Data API (Powered by Akshare)")
 
 # --- CORS ---
 app.add_middleware(
@@ -34,10 +34,9 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
 ]
 
-# 全局 Session 对象，复用 TCP 连接，显著提升性能
+# 全局 Session 对象，复用 TCP 连接
 global_session = requests.Session()
 
 def get_random_headers():
@@ -50,14 +49,8 @@ def get_random_headers():
 # --- CACHE SYSTEMS ---
 
 class GlobalEstimateCache:
-    """
-    全局估值缓存。
-    多用户场景下的核心优化：
-    如果 User A 获取了 001618 的数据，User B 在 60秒内也请求该基金，
-    直接返回内存数据，不请求第三方接口。防封禁，秒响应。
-    """
     def __init__(self, ttl_seconds=60):
-        self.cache = {} # {code: {data: dict, expire: timestamp}}
+        self.cache = {} 
         self.ttl = ttl_seconds
 
     def get(self, code):
@@ -71,7 +64,6 @@ class GlobalEstimateCache:
         return None
 
     def set(self, code, data):
-        # 只有获取到有效数据才缓存
         if data and data.get('gsz') != "0":
             self.cache[code] = {
                 'data': data,
@@ -90,9 +82,9 @@ class DataCache:
     async def get_funds_search_list(self):
         # 缓存有效期 24 小时
         if not self.funds_search_cache or not self.funds_list_time or (datetime.now() - self.funds_list_time).total_seconds() > 86400:
-            logger.info("Updating fund list cache...")
+            logger.info("Updating fund list cache via Akshare...")
             try:
-                # Akshare 同步接口放入线程池
+                # 使用 Akshare 获取基金列表
                 df = await run_in_threadpool(ak.fund_name_em)
                 self.funds_df = df
                 
@@ -141,27 +133,27 @@ def _get_time_phase():
 def _get_current_china_date_str():
     return _get_current_china_time().strftime('%Y-%m-%d')
 
-# --- DATA FETCHING (Optimized) ---
+# --- DATA FETCHING (Akshare) ---
 
 def _fetch_akshare_history_sync(code: str):
     try:
-        # Akshare 内部使用了 requests，这里无法直接注入 Session，但 akshare 调用频率较低，主要用于详情页
+        # 使用 Akshare 获取历史净值
         df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
         if not df.empty:
             if '净值日期' in df.columns: df['净值日期'] = df['净值日期'].astype(str)
             if '单位净值' in df.columns: df['单位净值'] = pd.to_numeric(df['单位净值'], errors='coerce')
             return df
-    except Exception: pass
+    except Exception as e:
+        logger.warning(f"Akshare history fetch error {code}: {e}")
     return pd.DataFrame()
 
 def _fetch_official_estimate_sync(code: str):
     """
-    Optimized fetch with Session reuse and Global Cache check.
+    估值数据依然保持直接请求，因为这是最快的方式，且 Akshare 没有专门针对高并发的实时估值接口优化
     """
     # 1. Check Global Cache first
     cached_data = estimate_cache.get(code)
     if cached_data:
-        # Logger debug removed to reduce IO
         return cached_data
 
     # 2. Fetch from remote
@@ -170,7 +162,6 @@ def _fetch_official_estimate_sync(code: str):
         timestamp = int(datetime.now().timestamp() * 1000)
         url = f"http://fundgz.1234567.com.cn/js/gszzl_{code}.js?rt={timestamp}"
         
-        # Use Global Session
         resp = global_session.get(url, headers=get_random_headers(), timeout=2.0)
         
         match = re.search(r'jsonpgz\((.*?)\);', resp.text)
@@ -178,10 +169,8 @@ def _fetch_official_estimate_sync(code: str):
             fetched = json.loads(match.group(1))
             if fetched: 
                 data.update(fetched)
-                # 3. Save to Global Cache
                 estimate_cache.set(code, data)
     except Exception as e: 
-        # logger.warning(f"Fetch estimate error {code}: {e}")
         pass
     return data
 
@@ -207,6 +196,7 @@ def _fetch_holdings_sync(code: str):
     try:
         current_year = datetime.now().year
         all_dfs = []
+        # 尝试获取最近两年的持仓，以确保能找到最新季度的报告
         for year in [current_year, current_year - 1]:
             try:
                 # Akshare fetch
@@ -220,6 +210,7 @@ def _fetch_holdings_sync(code: str):
         combined_df = pd.concat(all_dfs)
         if combined_df.empty: return []
 
+        # 排序找到最新的季度
         combined_df['rank'] = combined_df['季度'].apply(_parse_quarter_rank)
         combined_df['占净值比例'] = pd.to_numeric(combined_df['占净值比例'], errors='coerce').fillna(0)
         sorted_df = combined_df.sort_values(by=['rank', '占净值比例'], ascending=[False, False])
@@ -238,14 +229,17 @@ def _fetch_holdings_sync(code: str):
             })
         return holdings
     except Exception as e:
-        logger.error(f"Error fetching holdings for {code}: {e}")
+        logger.error(f"Error fetching holdings via Akshare for {code}: {e}")
         return []
 
 def _fetch_stock_quotes_sync(stock_codes: list):
-    """Batch fetch stock quotes with Session"""
+    """
+    Batch fetch stock quotes.
+    Akshare 的实时行情接口比较慢（单只获取），这里保留原有的批量接口实现以保证性能
+    """
     if not stock_codes: return {}
     unique_codes = list(set(stock_codes))
-    batch_size = 40 # Increased batch size slightly
+    batch_size = 40 
     quotes = {}
     
     for i in range(0, len(unique_codes), batch_size):
@@ -257,7 +251,6 @@ def _fetch_stock_quotes_sync(stock_codes: list):
         
         url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f3,f12&secids={','.join(secids)}"
         try:
-            # Use Global Session
             resp = global_session.get(url, headers=get_random_headers(), timeout=3.0)
             data = resp.json()
             if data and 'data' in data and 'diff' in data['data']:
@@ -274,6 +267,7 @@ async def _fetch_fund_base_data_concurrently(code: str):
     loop = asyncio.get_running_loop()
     # Estimate fetch is now super fast due to caching + session
     official_task = loop.run_in_executor(None, _fetch_official_estimate_sync, code)
+    # 使用 Akshare 获取历史
     history_task = loop.run_in_executor(None, _fetch_akshare_history_sync, code)
     official_data, history_df = await asyncio.gather(official_task, history_task)
     return code, official_data, history_df
@@ -331,9 +325,6 @@ async def get_estimate_api(code: str):
 @app.post("/api/estimate/batch")
 async def get_batch_estimate(codes: List[str] = Body(..., embed=True)):
     if not codes: return []
-    
-    # 显著优化：先检查缓存，缓存未命中的才去请求，请求后存入缓存
-    # _fetch_official_estimate_sync 内部已经集成了缓存逻辑
     
     tasks = [_fetch_fund_base_data_concurrently(code) for code in codes]
     base_results = await asyncio.gather(*tasks)
@@ -406,6 +397,7 @@ async def get_batch_estimate(codes: List[str] = Body(..., embed=True)):
         for code in calc_needed_codes:
             holdings = await data_cache.get_holdings(code)
             if not holdings:
+                # 使用 Akshare 获取持仓
                 holdings = await run_in_threadpool(_fetch_holdings_sync, code)
                 data_cache.set_holdings(code, holdings)
             
@@ -458,8 +450,7 @@ async def get_fund_detail(code: str):
     try:
         manager_name = "暂无"
         try:
-             # Fund Manager info usually changes rarely, could benefit from caching too, 
-             # but akshare manages internal requests.
+             # Akshare manager info
              m_df = await run_in_threadpool(ak.fund_manager_em, symbol=code)
              if not m_df.empty: manager_name = m_df.iloc[-1]['姓名']
         except: pass
@@ -479,6 +470,7 @@ async def get_fund_detail(code: str):
 
 @app.get("/api/history/{code}")
 async def get_history(code: str):
+    # 使用 Akshare 获取历史
     df = await run_in_threadpool(_fetch_akshare_history_sync, code)
     if df.empty: return []
     res = []
