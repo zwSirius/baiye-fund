@@ -109,6 +109,8 @@ const App: React.FC = () => {
 
   const saveCustomApiKey = () => {
       localStorage.setItem('smartfund_custom_key', customApiKey.trim());
+      // Trigger a storage event so AIChat component can pick up the change if it's open
+      window.dispatchEvent(new Event('storage'));
       alert('API Key 已保存');
   };
 
@@ -298,11 +300,11 @@ const App: React.FC = () => {
                     {/* AI Configuration */}
                     <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 p-4">
                         <div className="flex items-center gap-2 font-bold mb-3 text-slate-800 dark:text-white">
-                            <Key size={18} className="text-indigo-500" /> AI 配置
+                            <Key size={18} className="text-indigo-500" /> API Key 配置
                         </div>
-                        <div className="text-xs text-slate-500 dark:text-slate-400 mb-2">
-                            配置自定义 Google Gemini API Key 以使用所有 AI 功能。
-                            <br/>如果没有 Key，可在 AI 页面通过账号登录使用内置通道。
+                        <div className="text-xs text-slate-500 dark:text-slate-400 mb-2 leading-relaxed">
+                            请填入您的 Google Gemini API Key 以使用智能分析功能。
+                            <br/>Key 仅保存在您的本地浏览器中，请放心使用。
                         </div>
                         <div className="flex gap-2">
                             <input 
@@ -408,5 +410,4 @@ const App: React.FC = () => {
     </div>
   );
 };
-
 export default App;

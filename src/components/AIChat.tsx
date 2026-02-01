@@ -1,16 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI } from "@google/genai";
 import { ChatMessage } from '../types';
-import { Send, Bot, User, Loader2, Sparkles, Lock, Key, LogOut } from 'lucide-react';
+import { Send, Bot, User, Loader2, Sparkles, Lock, Settings } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { getEffectiveApiKey } from '../services/geminiService';
 
 export const AIChat: React.FC = () => {
   // --- Auth State ---
   const [isAuthorized, setIsAuthorized] = useState(false);
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [loginError, setLoginError] = useState('');
 
   // --- Chat State ---
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -35,6 +32,10 @@ export const AIChat: React.FC = () => {
 
   useEffect(() => {
       checkAuth();
+      // Listen to storage changes in case user updates key in another tab/window or comes back from settings
+      const handleStorageChange = () => checkAuth();
+      window.addEventListener('storage', handleStorageChange);
+      return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
   const scrollToBottom = () => {
@@ -44,32 +45,6 @@ export const AIChat: React.FC = () => {
   useEffect(() => {
     scrollToBottom();
   }, [messages, isAuthorized]);
-
-  const handleLogin = () => {
-      if (username === 'baiye' && password === '1997') {
-          localStorage.setItem('smartfund_vip_unlocked', 'true');
-          checkAuth();
-          setLoginError('');
-      } else {
-          setLoginError('账号或密码错误');
-      }
-  };
-
-  const handleLogout = () => {
-      localStorage.removeItem('smartfund_vip_unlocked');
-      // Note: We don't remove custom key here, as user might want to switch methods. 
-      // But to "Re-lock" effectively if custom key exists, we might need to clear that too or logic in getEffectiveApiKey handles priority.
-      // If custom key exists, getEffectiveApiKey returns it, so isAuthorized remains true.
-      // We will notify user.
-      if (localStorage.getItem('smartfund_custom_key')) {
-          if(confirm('检测到已配置自定义 API Key。是否同时也清除自定义 Key 以完全退出？')) {
-              localStorage.removeItem('smartfund_custom_key');
-          }
-      }
-      setIsAuthorized(false);
-      setUsername('');
-      setPassword('');
-  };
 
   const handleSend = async () => {
     if (!input.trim()) return;
@@ -110,7 +85,11 @@ export const AIChat: React.FC = () => {
 
     } catch (error: any) {
       console.error(error);
-      const errorMsg = "网络连接异常或服务未授权，请检查设置。";
+      let errorMsg = "网络连接异常，请稍后再试。";
+      if (error.message?.includes('401') || error.message?.includes('API key')) {
+          errorMsg = "API Key 无效或过期，请前往设置页面检查配置。";
+          setIsAuthorized(false); 
+      }
 
       setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
@@ -122,7 +101,7 @@ export const AIChat: React.FC = () => {
     }
   };
 
-  // --- Login View ---
+  // --- No Key View ---
   if (!isAuthorized) {
       return (
           <div className="flex flex-col items-center justify-center h-[calc(100vh-140px)] bg-slate-50 dark:bg-slate-950 px-6">
@@ -130,40 +109,21 @@ export const AIChat: React.FC = () => {
                   <div className="w-16 h-16 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-500 rounded-full flex items-center justify-center mx-auto mb-4">
                       <Lock size={32} />
                   </div>
-                  <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-2">AI 服务未授权</h2>
+                  <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-2">需要配置 API Key</h2>
                   <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">
-                      请输入账号密码解锁内置通道，<br/>或在设置页面配置自定义 API Key。
+                      为了保护您的隐私并提供稳定的 AI 服务，<br/>请前往设置页面配置您自己的 Gemini API Key。
                   </p>
                   
-                  <div className="space-y-3">
-                      <input 
-                        type="text" 
-                        placeholder="账号"
-                        value={username}
-                        onChange={e => setUsername(e.target.value)}
-                        className="w-full p-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
-                      />
-                      <input 
-                        type="password" 
-                        placeholder="密码"
-                        value={password}
-                        onChange={e => setPassword(e.target.value)}
-                        className="w-full p-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 text-slate-900 dark:text-white"
-                      />
+                  <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-xl mb-6 text-xs text-left text-slate-500 dark:text-slate-400 space-y-2">
+                      <p>1. 访问 <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-blue-500 underline">Google AI Studio</a> 获取 Key。</p>
+                      <p>2. 在本应用「设置」页面粘贴保存。</p>
+                      <p>3. 您的 Key 仅保存在本地浏览器中。</p>
                   </div>
 
-                  {loginError && <div className="text-red-500 text-xs mt-3">{loginError}</div>}
-
-                  <button 
-                    onClick={handleLogin}
-                    className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl mt-6 hover:bg-indigo-700 active:scale-95 transition"
-                  >
-                      解锁通道
-                  </button>
-
-                  <p className="text-xs text-slate-400 mt-4">
-                      已有 API Key? 请前往 <span className="text-indigo-500 font-bold">设置</span> 页面配置
-                  </p>
+                  {/* 这里只是提示，实际上通过导航栏切换 */}
+                  <div className="flex items-center justify-center gap-2 text-indigo-600 dark:text-indigo-400 font-bold text-sm animate-bounce">
+                      <Settings size={16} /> 点击底部 "设置" 进行配置
+                  </div>
               </div>
           </div>
       );
@@ -180,11 +140,8 @@ export const AIChat: React.FC = () => {
             </div>
             <div className="flex items-center gap-2">
                 <div className="text-[10px] text-green-500 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded-full flex items-center gap-1">
-                    <Key size={10} /> 已连接
+                    <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span> 已就绪
                 </div>
-                <button onClick={handleLogout} className="text-slate-400 hover:text-red-500 transition" title="重新锁定">
-                    <LogOut size={16} />
-                </button>
             </div>
         </div>
 

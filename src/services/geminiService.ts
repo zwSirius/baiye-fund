@@ -2,20 +2,12 @@ import { GoogleGenAI } from "@google/genai";
 import { Fund } from "../types";
 
 // 获取有效的 API Key
-// 优先级: 自定义 Key > 解锁后的内置 Key
+// 仅支持用户自定义配置的 Key
 export const getEffectiveApiKey = (): string | null => {
-    // 1. 检查自定义 Key
     const customKey = localStorage.getItem('smartfund_custom_key');
     if (customKey && customKey.trim().length > 0) {
         return customKey;
     }
-    
-    // 2. 检查是否解锁内置 Key
-    const isVip = localStorage.getItem('smartfund_vip_unlocked') === 'true';
-    if (isVip) {
-        return process.env.API_KEY || null;
-    }
-    
     return null; // 无可用 Key
 };
 
@@ -23,7 +15,7 @@ export const analyzeFund = async (fund: Fund): Promise<string> => {
   const apiKey = getEffectiveApiKey();
   
   if (!apiKey) {
-      return "⚠️ AI 服务未授权。\n\n请在「工具 -> AI」页面登录解锁内置通道，或在「设置」中配置自定义 API Key。";
+      return "⚠️ AI 服务未授权。\n\n请前往「设置」页面配置您的 Google Gemini API Key 以使用智能分析功能。";
   }
 
   const prompt = `
