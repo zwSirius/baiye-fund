@@ -8,18 +8,29 @@ interface MarketConfigModalProps {
   onSave: (codes: string[]) => void;
 }
 
-// 预置的热门板块/指数代码 (Mapping to Eastmoney secids)
-// 这里为了简化，我们列出常用的，并假设后端可以处理
+// 预置的热门板块/指数代码
+// 注意：这些代码需要符合后端 get_secid 的解析规则
+// 1.xxxxxx = 沪市/上证系列
+// 0.xxxxxx = 深市/深证系列/行业指数(通常映射在0或1下)
+// 100.HSI = 恒生指数
+// 100.NDX = 纳斯达克100
+// 100.SPX = 标普500
+// 100.DJI = 道琼斯
+
 const PRESETS = [
     { name: '上证指数', code: '1.000001', category: '大盘' },
     { name: '深证成指', code: '0.399001', category: '大盘' },
     { name: '创业板指', code: '0.399006', category: '大盘' },
     { name: '科创50', code: '1.000688', category: '大盘' },
-    { name: '恒生指数', code: '100.HSI', category: '港美' }, // 需后端支持，这里暂留位
+    
+    { name: '恒生指数', code: '100.HSI', category: '港美' },
+    { name: '恒生科技', code: '100.HSTECH', category: '港美' },
     { name: '纳斯达克', code: '100.NDX', category: '港美' },
+    { name: '标普500', code: '100.SPX', category: '港美' },
+    
     { name: '中证白酒', code: '0.399997', category: '行业' },
     { name: '新能源车', code: '0.399976', category: '行业' },
-    { name: '半导体', code: '0.991023', category: '行业' }, // 中证半导体
+    { name: '半导体', code: '1.000996', category: '行业' }, // 中证半导体(沪)
     { name: '光伏产业', code: '0.931151', category: '行业' },
     { name: '中证医药', code: '0.000933', category: '行业' },
     { name: '中证军工', code: '0.399967', category: '行业' },
@@ -35,8 +46,8 @@ export const MarketConfigModal: React.FC<MarketConfigModalProps> = ({ isOpen, on
         if (selected.includes(code)) {
             setSelected(prev => prev.filter(c => c !== code));
         } else {
-            if (selected.length >= 8) {
-                alert("最多选择 8 个关注板块");
+            if (selected.length >= 10) {
+                alert("最多选择 10 个关注板块");
                 return;
             }
             setSelected(prev => [...prev, code]);
@@ -51,7 +62,7 @@ export const MarketConfigModal: React.FC<MarketConfigModalProps> = ({ isOpen, on
     if (!isOpen) return null;
 
     // Group by category
-    const categories = ['大盘', '行业', '港美']; // 港美可能需要后端适配，暂且放着
+    const categories = ['大盘', '行业', '港美'];
 
     return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
@@ -88,7 +99,7 @@ export const MarketConfigModal: React.FC<MarketConfigModalProps> = ({ isOpen, on
                         </div>
                     ))}
                     <div className="text-xs text-slate-400 mt-2 bg-yellow-50 dark:bg-yellow-900/20 p-2 rounded text-center">
-                        提示：部分港美股指数数据可能延迟
+                        提示：行业板块和外盘指数通过实时接口获取，可能存在些许延迟。
                     </div>
                 </div>
 
