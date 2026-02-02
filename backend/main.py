@@ -49,28 +49,43 @@ class GlobalSession:
 class CacheService:
     """Simple in-memory cache"""
     def __init__(self):
-        self._estimate_cache = {}
+        self._estimate_cache = {} # Individual cache
+        self._all_estimates_cache = {"data": [], "time": None} # Bulk cache
         self._funds_list_cache = []
         self._funds_list_time = None
         self._holdings_cache = {}
+        self._market_cache = {"data": [], "time": None}
 
     def get_estimate(self, code: str):
+        # 1. Try individual cache
         entry = self._estimate_cache.get(code)
         if entry and time_module.time() < entry['expire']:
             return entry['data']
+        
+        # 2. Try bulk cache (valid for 3 min)
+        if self._all_estimates_cache['data'] and self._all_estimates_cache['time']:
+             if (datetime.now() - self._all_estimates_cache['time']).total_seconds() < 180:
+                 # Find in list
+                 found = next((x for x in self._all_estimates_cache['data'] if x['fundcode'] == code), None)
+                 if found: return found
         return None
 
     def set_estimate(self, code: str, data: dict, ttl: int = 60):
-        if data and data.get('gsz') != "0":
+        if data:
             self._estimate_cache[code] = {
                 'data': data,
                 'expire': time_module.time() + ttl
             }
 
+    def set_all_estimates(self, data: list):
+        self._all_estimates_cache = {
+            "data": data,
+            "time": datetime.now()
+        }
+
     def get_holdings(self, code: str):
         entry = self._holdings_cache.get(code)
-        # Holdings cache valid for 24 hours
-        if entry and (datetime.now() - entry['time']).total_seconds() < 86400:
+        if entry and (datetime.now() - entry['time']).total_seconds() < 86400: # 24h
             return entry['data']
         return None
 
@@ -78,7 +93,6 @@ class CacheService:
         self._holdings_cache[code] = {"data": data, "time": datetime.now()}
 
     async def get_funds_list(self):
-        # List cache valid for 24 hours
         if not self._funds_list_cache or not self._funds_list_time or \
            (datetime.now() - self._funds_list_time).total_seconds() > 86400:
             return None
@@ -91,7 +105,7 @@ class CacheService:
 cache_service = CacheService()
 
 class AkshareService:
-    """Encapsulates Akshare and Data Fetching Logic"""
+    """Encapsulates AKShare and Data Fetching Logic"""
     
     @staticmethod
     def get_headers():
@@ -113,6 +127,10 @@ class AkshareService:
 
     @staticmethod
     def fetch_fund_history_sync(code: str) -> pd.DataFrame:
+        """
+        Interface: fund_open_fund_info_em
+        Target: http://fund.eastmoney.com/pingzhongdata/710001.js
+        """
         try:
             df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
             if not df.empty:
@@ -124,39 +142,95 @@ class AkshareService:
         return pd.DataFrame()
 
     @staticmethod
-    def fetch_realtime_estimate_sync(code: str):
-        cached = cache_service.get_estimate(code)
-        if cached: return cached
+    def fetch_all_estimates_sync():
+        """
+        Interface: fund_value_estimation_em
+        Desc: Get real-time estimation for ALL funds.
+        """
+        try:
+            # symbol='全部' returns all
+            df = ak.fund_value_estimation_em(symbol="全部")
+            if df.empty: return []
+            
+            # DataFrame columns: 基金代码, 基金名称, 交易日-估算数据-估算值, 交易日-估算数据-估算增长率, ...
+            results = []
+            now_str = datetime.now().strftime('%Y-%m-%d')
+            
+            # Iterate efficiently
+            for row in df.itertuples():
+                try:
+                    # Access by index or name if safe. Use dict access for safety with spaces.
+                    # akshare dataframe columns often have chinese names.
+                    r_dict = row._asdict()
+                    # Map based on known column names from doc
+                    # _1='基金代码', _3='交易日-估算数据-估算值', _4='交易日-估算数据-估算增长率' roughly
+                    # Better to convert to dict first if column names are dynamic, but let's assume standard
+                    pass 
+                except: continue
 
-        data = { "gsz": "0", "gszzl": "0", "dwjz": "0", "jzrq": "", "name": "", "source": "official" }
+            # Convert to dict list
+            records = df.to_dict('records')
+            for r in records:
+                try:
+                    est_val = r.get('交易日-估算数据-估算值')
+                    est_rate = r.get('交易日-估算数据-估算增长率')
+                    if not est_val or str(est_val) == '--': continue
+                    
+                    results.append({
+                        "fundcode": str(r.get('基金代码')),
+                        "name": str(r.get('基金名称')),
+                        "gsz": str(est_val),
+                        "gszzl": str(est_rate).replace('%', '') if est_rate else "0",
+                        "dwjz": str(r.get('交易日-公布数据-单位净值', '')),
+                        "jzrq": now_str,
+                        "source": "official_all"
+                    })
+                except: continue
+                
+            return results
+        except Exception as e:
+            logger.error(f"Fetch all estimates error: {e}")
+            return []
+
+    @staticmethod
+    def fetch_realtime_estimate_fallback_sync(code: str):
+        """
+        Fallback direct request if bulk interface misses or fails
+        """
+        data = { "gsz": "0", "gszzl": "0", "dwjz": "0", "jzrq": "", "name": "", "source": "official_fallback" }
         try:
             ts = int(time_module.time() * 1000)
             url = f"http://fundgz.1234567.com.cn/js/gszzl_{code}.js?rt={ts}"
-            resp = GlobalSession.get().get(url, headers=AkshareService.get_headers(), timeout=2.0)
+            resp = GlobalSession.get().get(url, headers=AkshareService.get_headers(), timeout=1.5)
             match = re.search(r'jsonpgz\((.*?)\);', resp.text)
             if match:
                 fetched = json.loads(match.group(1))
                 if fetched:
                     data.update(fetched)
-                    cache_service.set_estimate(code, data)
         except Exception: pass
         return data
 
     @staticmethod
     def fetch_holdings_sync(code: str) -> List[Dict]:
+        """
+        Interface: fund_portfolio_hold_em
+        Target: http://fundf10.eastmoney.com/ccmx_000001.html
+        """
         try:
             year = datetime.now().year
             all_dfs = []
-            # Try current year and previous year to ensure we get the latest report
+            # Try current year and previous year
             for y in [year, year - 1]:
                 try:
-                    df = ak.fund_portfolio_hold_em(symbol=code, date=y)
-                    if not df.empty and '季度' in df.columns: all_dfs.append(df)
+                    df = ak.fund_portfolio_hold_em(symbol=code, date=str(y))
+                    if not df.empty and '季度' in df.columns: 
+                        all_dfs.append(df)
                 except: continue
             
             if not all_dfs: return []
             combined = pd.concat(all_dfs)
             
+            # Parse '2024年1季度股票投资明细' -> Rank
             def parse_rank(q):
                 try:
                     if '年报' in q: return int(re.search(r'(\d{4})', q).group(1)) * 100 + 4
@@ -165,12 +239,12 @@ class AkshareService:
 
             combined['rank'] = combined['季度'].apply(parse_rank)
             combined['占净值比例'] = pd.to_numeric(combined['占净值比例'], errors='coerce').fillna(0)
+            
+            # Sort by date desc, then weight desc
             sorted_df = combined.sort_values(by=['rank', '占净值比例'], ascending=[False, False])
             
             if sorted_df.empty: return []
             latest_rank = sorted_df.iloc[0]['rank']
-            
-            # Extract top 10
             top10 = sorted_df[sorted_df['rank'] == latest_rank].head(10)
             
             return [
@@ -186,38 +260,47 @@ class AkshareService:
             return []
 
     @staticmethod
+    def fetch_fund_basic_info_sync(code: str):
+        """
+        Interface: fund_individual_basic_info_xq
+        Target: https://danjuanfunds.com/funding/000001
+        """
+        try:
+            df = ak.fund_individual_basic_info_xq(symbol=code)
+            # DF columns: item, value
+            info = {}
+            if not df.empty:
+                for _, row in df.iterrows():
+                    info[row['item']] = row['value']
+            return info
+        except Exception as e:
+            logger.warning(f"Basic info error {code}: {e}")
+            return {}
+
+    @staticmethod
     def fetch_stock_quotes_sync(codes: List[str]) -> Dict[str, Dict[str, float]]:
+        """
+        Batch fetch stock quotes for holdings valuation.
+        Direct API is used here for performance (fetching 10 specific items vs downloading full market).
+        Logic updated to support BJ/ETF.
+        """
         if not codes: return {}
         unique = list(set(codes))
         quotes = {}
         batch_size = 40
+        
         for i in range(0, len(unique), batch_size):
             batch = unique[i:i+batch_size]
             secids = []
             for c in batch:
                 # Eastmoney secid rules:
-                # 1.xxx = SH (6xx), 0.xxx = SZ (0xx, 3xx), 0.xxx = BJ (8xx, 4xx) usually
-                # 1.5xx = SH ETF/LOF, 0.159 = SZ ETF
+                # 1.xxx: SH Main(6), SH 科创(688), SH B(900), SH Bond(11), SH Fund(5)
+                # 0.xxx: SZ Main(00), SZ ChiNext(30), SZ B(20), BJ(8/4), SZ Fund(159)
                 
-                if c.startswith('6'): 
+                if c.startswith('6') or c.startswith('900') or c.startswith('5') or c.startswith('11'): 
                     secids.append(f"1.{c}")
-                elif c.startswith('0') or c.startswith('3'): 
-                    secids.append(f"0.{c}")
-                elif c.startswith('8') or c.startswith('4'): 
-                    # Beijing Exchange
-                    secids.append(f"0.{c}")
-                elif c.startswith('5') or c.startswith('11'): 
-                    # SH Funds/Bonds
-                    secids.append(f"1.{c}")
-                elif c.startswith('1'):
-                    # 159xxx is SZ ETF -> 0.
-                    # 11xxxx is SH Bond -> 1.
-                    if c.startswith('159'):
-                         secids.append(f"0.{c}")
-                    else:
-                         secids.append(f"1.{c}")
                 else: 
-                    # Fallback default to 0 (SZ/BJ)
+                    # Covers 00x, 30x, 8xx(BJ), 4xx(BJ), 159(SZ ETF)
                     secids.append(f"0.{c}")
             
             # f2: price, f3: change%
@@ -231,30 +314,58 @@ class AkshareService:
                             "price": float(item['f2']) if item['f2'] != '-' else 0.0,
                             "change": float(item['f3']) if item['f3'] != '-' else 0.0
                         }
-            except Exception as e:
-                logger.warning(f"Quote batch fetch error: {e}")
-                pass
+            except Exception: pass
         return quotes
 
     @staticmethod
     def fetch_fund_list_sync():
+        """
+        Interface: fund_name_em
+        Target: http://fund.eastmoney.com/fund.html
+        """
         try:
             df = ak.fund_name_em()
-            df = df.rename(columns={
-                '基金代码': 'code',
-                '基金简称': 'name',
-                '基金类型': 'type',
-                '拼音缩写': 'pinyin'
-            })
-            result = df[['code', 'name', 'type', 'pinyin']].to_dict('records')
-            for r in result:
-                r['code'] = str(r['code'])
-                r['name'] = str(r['name'])
-                r['type'] = str(r['type'])
-                r['pinyin'] = str(r['pinyin'])
+            # Columns: 基金代码, 拼音缩写, 基金简称, 基金类型, 拼音全称
+            result = []
+            for _, row in df.iterrows():
+                result.append({
+                    "code": str(row['基金代码']),
+                    "name": str(row['基金简称']),
+                    "type": str(row['基金类型']),
+                    "pinyin": str(row['拼音缩写'])
+                })
             return result
         except Exception as e:
             logger.error(f"Fetch fund list error: {e}")
+            return []
+
+    @staticmethod
+    def fetch_market_indices_sync():
+        """
+        Interface: stock_zh_index_spot_em
+        Symbol: 沪深重要指数
+        """
+        try:
+            df = ak.stock_zh_index_spot_em(symbol="沪深重要指数")
+            if df.empty: return []
+            
+            target_indices = ["上证指数", "深证成指", "创业板指", "科创50", "沪深300"]
+            result = []
+            for _, row in df.iterrows():
+                name = row['名称']
+                if name in target_indices:
+                    chg = float(row['涨跌幅'])
+                    result.append({
+                        "name": name, 
+                        "code": str(row['代码']),
+                        "changePercent": chg, 
+                        "value": float(row['最新价']),
+                        "score": int(max(0, min(100, 50 + chg * 10))),
+                        "leadingStock": "--"
+                    })
+            return result
+        except Exception as e:
+            logger.error(f"Market indices error: {e}")
             return []
 
 # --- Business Logic Controller ---
@@ -272,6 +383,7 @@ class FundController:
         
         key = key.upper()
         res = []
+        # Optimized search
         for f in cached:
             if key in f['code'] or key in f['name'] or key in f['pinyin']:
                 res.append(f)
@@ -280,21 +392,13 @@ class FundController:
 
     @staticmethod
     async def get_fund_detail(code: str):
-        manager_task = run_in_threadpool(ak.fund_manager_em, symbol=code)
+        # Parallel fetch: Holdings + Basic Info
+        holdings_task = run_in_threadpool(AkshareService.fetch_holdings_sync, code)
+        basic_task = run_in_threadpool(AkshareService.fetch_fund_basic_info_sync, code)
         
-        cached_holdings = cache_service.get_holdings(code)
-        if cached_holdings:
-            holdings = cached_holdings
-        else:
-            holdings = await run_in_threadpool(AkshareService.fetch_holdings_sync, code)
-            cache_service.set_holdings(code, holdings)
-
-        manager_name = "暂无"
-        try:
-            m_df = await manager_task
-            if not m_df.empty: manager_name = m_df.iloc[-1]['姓名']
-        except: pass
-
+        holdings, basic = await asyncio.gather(holdings_task, basic_task)
+        
+        # Add real-time quotes to holdings
         if holdings:
             quotes = await run_in_threadpool(AkshareService.fetch_stock_quotes_sync, [h['code'] for h in holdings])
             for h in holdings: 
@@ -306,20 +410,50 @@ class FundController:
                     h['changePercent'] = 0
                     h['currentPrice'] = 0
 
-        return {"code": code, "manager": manager_name, "holdings": holdings}
+        manager = basic.get('基金经理', '暂无')
+        return {
+            "code": code, 
+            "manager": manager, 
+            "holdings": holdings,
+            # Additional details from basic info
+            "fund_size": basic.get('最新规模', ''),
+            "start_date": basic.get('成立时间', '')
+        }
+
+    @staticmethod
+    async def get_market_status():
+        cached = cache_service.get_market_data()
+        if cached: return cached
+        
+        data = await run_in_threadpool(AkshareService.fetch_market_indices_sync)
+        if data:
+            cache_service.set_market_data(data)
+        return data
 
     @staticmethod
     async def batch_estimate(codes: List[str]):
         if not codes: return []
         
+        # 1. Try to refresh global estimates if empty
+        if not cache_service._all_estimates_cache['data']:
+             all_est = await run_in_threadpool(AkshareService.fetch_all_estimates_sync)
+             if all_est: cache_service.set_all_estimates(all_est)
+
         loop = asyncio.get_running_loop()
         
-        async def fetch_one(c):
-            official = await loop.run_in_executor(None, AkshareService.fetch_realtime_estimate_sync, c)
+        # 2. Process each fund
+        async def process_one(c):
+            # Try cache first (populated by all_estimates)
+            est = cache_service.get_estimate(c)
+            if not est:
+                # Fallback to single fetch
+                est = await loop.run_in_executor(None, AkshareService.fetch_realtime_estimate_fallback_sync, c)
+            
+            # Fetch history for last NAV reference
             history = await loop.run_in_executor(None, AkshareService.fetch_fund_history_sync, c)
-            return c, official, history
+            return c, est, history
 
-        base_results = await asyncio.gather(*[fetch_one(c) for c in codes])
+        base_results = await asyncio.gather(*[process_one(c) for c in codes])
         
         results_map = {}
         calc_needed = []
@@ -327,11 +461,13 @@ class FundController:
         today_str = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d')
 
         for code, official, history in base_results:
-            res = { "fundcode": code, **official }
+            res = { "fundcode": code, **(official or {}) }
             
+            # Determine Last NAV
             last_nav = 1.0
             if not history.empty:
                 latest = history.iloc[-1]
+                # If history has today's data (updated after close), use it
                 last_nav = float(latest['单位净值'])
                 res['dwjz'] = str(latest['单位净值'])
                 res['jzrq'] = str(latest['净值日期'])
@@ -340,52 +476,64 @@ class FundController:
             
             res['_last_nav'] = last_nav
             
+            # Logic to determine if we need manual calculation
             need_calc = False
+            
             if phase in ['PRE_MARKET', 'WEEKEND']:
+                # Market closed, show last close
                 res['gsz'] = res['dwjz']
+                res['gszzl'] = "0.00"
                 if len(history) >= 2:
                     prev = float(history.iloc[-2]['单位净值'])
-                    if prev > 0: res['gszzl'] = "{:.4f}".format(((last_nav - prev)/prev)*100)
-                else: res['gszzl'] = "0.00"
+                    if prev > 0: 
+                        res['gszzl'] = "{:.4f}".format(((last_nav - prev)/prev)*100)
                 res['source'] = 'real_history'
+                
             elif phase == 'POST_MARKET':
-                # If official data is updated for today
+                # Market closed today
                 if res.get('jzrq') == today_str:
+                    # Official NAV updated
                     curr = float(res.get('dwjz', 0))
+                    # Calculate change based on history
                     prev = 0
                     if not history.empty:
-                        # Check if history already has today's data
+                        # Check if history implies today is the latest
                         if str(history.iloc[-1]['净值日期']) == today_str:
-                            if len(history) >= 2: prev = float(history.iloc[-2]['单位净值'])
+                             if len(history) >= 2: prev = float(history.iloc[-2]['单位净值'])
                         else:
-                            prev = float(history.iloc[-1]['单位净值'])
+                             # History not yet updated but realtime interface has today's dwjz
+                             prev = float(history.iloc[-1]['单位净值'])
+                    
                     if prev > 0:
                         res['gsz'] = str(curr)
                         res['gszzl'] = "{:.4f}".format(((curr - prev)/prev)*100)
                         res['source'] = "real_updated"
                 else:
+                    # Not yet updated, try calc
                     need_calc = True
             else:
-                 # Market Open
+                 # Market Open: Check if official estimate is valid
                  off_gsz = float(res.get("gsz", 0))
-                 # Use calculation if official estimate is stale (equal to last nav or 0)
+                 # If estimate is 0 or same as last nav (no movement), try calc
                  if off_gsz <= 0 or abs(off_gsz - last_nav) < 0.0001:
                      need_calc = True
+                 else:
+                     res['source'] = 'official_live'
             
             if need_calc: calc_needed.append(code)
             results_map[code] = res
 
+        # 3. Manual Calculation for funds missing official data
         if calc_needed:
-            # 1. Fetch holdings if missing
-            codes_for_holding_fetch = [c for c in calc_needed if not cache_service.get_holdings(c)]
-            
-            if codes_for_holding_fetch:
-                 h_tasks = [run_in_threadpool(AkshareService.fetch_holdings_sync, c) for c in codes_for_holding_fetch]
+            # Fetch holdings
+            codes_to_fetch = [c for c in calc_needed if not cache_service.get_holdings(c)]
+            if codes_to_fetch:
+                 h_tasks = [run_in_threadpool(AkshareService.fetch_holdings_sync, c) for c in codes_to_fetch]
                  fetched_h = await asyncio.gather(*h_tasks)
-                 for i, c in enumerate(codes_for_holding_fetch):
+                 for i, c in enumerate(codes_to_fetch):
                      cache_service.set_holdings(c, fetched_h[i])
             
-            # 2. Collect stock codes
+            # Aggregate stock codes
             all_stocks = []
             fund_holdings_map = {}
             for c in calc_needed:
@@ -393,10 +541,10 @@ class FundController:
                 fund_holdings_map[c] = h
                 all_stocks.extend([x['code'] for x in h])
             
-            # 3. Fetch Quotes
+            # Fetch Quotes
             quotes = await run_in_threadpool(AkshareService.fetch_stock_quotes_sync, all_stocks)
             
-            # 4. Calculate
+            # Calculate
             for c in calc_needed:
                 data = results_map[c]
                 holdings = fund_holdings_map.get(c, [])
@@ -413,8 +561,8 @@ class FundController:
                 
                 est_change = 0
                 if total_weight > 0:
+                    # Normalize: Assume non-top10 holdings move similarly (with 0.95 dampening)
                     normalized = weighted_change / total_weight
-                    # Factor 0.95 accounts for cash/bonds which usually move less
                     est_change = normalized * 0.95
                 
                 est_nav = data['_last_nav'] * (1 + est_change / 100.0)
@@ -438,7 +586,7 @@ class FundController:
 
 # --- FastAPI App ---
 
-app = FastAPI(title="SmartFund API", description="Optimized Backend")
+app = FastAPI(title="SmartFund API", description="Optimized Backend using AKShare Interfaces")
 
 app.add_middleware(
     CORSMiddleware,
@@ -460,31 +608,8 @@ async def search(key: str = Query(..., min_length=1)):
 
 @router.get("/market")
 async def market(codes: str = Query(None)):
-    target_codes = codes.split(',') if codes else ["1.000001", "0.399001"]
-    
-    def format_secid(c):
-        if '.' in c: return c 
-        if c.startswith('6') or c.startswith('1') or c.startswith('5'): return f"1.{c}"
-        return f"0.{c}"
-
-    secids = [format_secid(c) for c in target_codes] 
-    
-    url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f3,f12,f14,f2&secids={','.join(secids)}"
-    try:
-        resp = await run_in_threadpool(lambda: requests.get(url, headers=AkshareService.get_headers(), timeout=3))
-        data = resp.json()
-        result = []
-        if data and 'data' in data and 'diff' in data['data']:
-            for item in data['data']['diff']:
-                change = float(item['f3']) if item['f3'] else 0.0
-                score = max(0, min(100, 50 + change * 10))
-                result.append({
-                    "name": item['f14'], "code": item['f12'], 
-                    "changePercent": change, "score": int(score), 
-                    "leadingStock": "--", "value": item['f2']
-                })
-        return result
-    except: return []
+    # Return standard market indices
+    return await FundController.get_market_status()
 
 @router.get("/estimate/{code}")
 async def estimate_one(code: str):
