@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Fund, Group, Transaction } from '../types';
 import { searchFunds, fetchRealTimeEstimate } from '../services/fundService';
@@ -135,6 +134,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
         setStep('input');
     } catch (e) {
         console.error("Failed to fetch details", e);
+        // Fallback for watchlist if API fails
         if (targetIsWatchlist) {
              onSave({ 
                  ...fund, 
@@ -151,6 +151,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
              });
              onClose();
         } else {
+            // For holding mode, we still need to show input even if fetch fails
             setSelectedFund({
                 ...fund,
                 estimatedNav: 0,
@@ -194,6 +195,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
         transactions = [initialTx];
     }
 
+    // 使用统一计算逻辑
     const profitToday = calculateFundMetrics(
         holdingShares,
         selectedFund.lastNav,
@@ -219,14 +221,14 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
   if (!isOpen) return null;
 
   return (
-    // Changed: items-end for Mobile (Bottom Sheet), items-center for Desktop
     <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center sm:p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose}></div>
-      
-      {/* Changed: Rounded top for mobile, full rounded for desktop. Height adjusted for keyboard. */}
-      <div className="bg-white dark:bg-slate-900 w-full max-w-md h-[90vh] sm:h-auto sm:rounded-2xl rounded-t-2xl shadow-xl z-10 flex flex-col overflow-hidden animate-slide-up sm:animate-fade-in transition-all">
+      <div 
+        className="bg-white dark:bg-slate-900 w-full max-w-md sm:rounded-2xl rounded-t-2xl shadow-xl z-10 flex flex-col overflow-hidden animate-slide-up sm:animate-fade-in transition-all"
+        style={{ height: 'calc(90vh - env(safe-area-inset-bottom))' }} 
+      >
         
-        <div className="flex justify-between items-center p-4 border-b border-slate-100 dark:border-slate-800">
+        <div className="flex justify-between items-center p-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
           <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
             {isWatchlistMode ? <Eye className="text-blue-500" size={20}/> : null}
             {isWatchlistMode ? '添加自选基金' : (initialFund ? '编辑持仓' : (step === 'search' ? '添加持仓' : '配置持仓'))}
@@ -236,7 +238,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto bg-slate-50 dark:bg-slate-950 p-4 relative">
+        <div className="flex-1 overflow-y-auto bg-slate-50 dark:bg-slate-950 p-4 relative no-scrollbar">
           {isLoadingDetails && (
               <div className="absolute inset-0 bg-white/80 dark:bg-slate-900/80 z-20 flex flex-col items-center justify-center backdrop-blur-sm">
                   <Loader2 className="animate-spin text-blue-500 mb-2" size={32} />
@@ -263,7 +265,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
                 )}
               </div>
 
-              <div className="space-y-2 pb-safe">
+              <div className="space-y-2">
                 {searchResults.map(fund => (
                   <div 
                     key={fund.id} 
@@ -308,12 +310,15 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
           )}
 
           {step === 'input' && selectedFund && !isWatchlistMode && (
-             <div className="space-y-4 animate-fade-in pb-safe">
+             <div className="space-y-4 animate-fade-in pb-20">
                 <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-blue-100 dark:border-blue-900 shadow-sm">
                    <div className="text-sm text-slate-500 dark:text-slate-400 mb-1">当前基金</div>
                    <div className="font-bold text-lg text-slate-800 dark:text-slate-100">{selectedFund.name}</div>
                    <div className="flex justify-between items-end mt-2">
-                       <div className="text-xs text-blue-500 font-mono bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded">{selectedFund.code}</div>
+                       <div className="flex items-center gap-2">
+                          <div className="text-xs text-blue-500 font-mono bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded">{selectedFund.code}</div>
+                          {selectedFund.tags && selectedFund.tags.length > 0 && <div className="text-xs text-slate-400">{selectedFund.tags[0]}</div>}
+                       </div>
                        <div className="text-right">
                            <div className="text-[10px] text-slate-400">实时估值</div>
                            <div className={`font-bold ${selectedFund.estimatedChangePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
@@ -396,7 +401,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
         </div>
 
         {step === 'input' && !isWatchlistMode && (
-          <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 pb-safe">
+          <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0 pb-safe">
             <button 
               onClick={handleConfirm}
               className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl shadow-lg hover:bg-blue-700 active:scale-[0.98] transition flex items-center justify-center gap-2"
