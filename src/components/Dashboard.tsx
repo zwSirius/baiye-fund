@@ -1,6 +1,7 @@
+
 import React, { useState, useMemo, useEffect } from 'react';
 import { Fund, Group } from '../types';
-import { RefreshCw, LayoutDashboard, ChevronRight, Zap, Clock, Moon, Coffee, Plus } from 'lucide-react';
+import { RefreshCw, LayoutDashboard, ChevronRight, Zap, Clock, Moon, Coffee, Plus, Wallet, Gem, BarChart3, Binary, ShieldCheck, Microscope } from 'lucide-react';
 
 interface DashboardProps {
   funds: Fund[];
@@ -10,7 +11,7 @@ interface DashboardProps {
   totalMarketValue: number;
   lastUpdate: Date;
   isRefreshing?: boolean;
-  isPrivacyMode: boolean; // 新增隐私模式属性
+  isPrivacyMode: boolean;
   onRefresh: () => void;
   onAnalyze: (fund: Fund) => void;
   onFundClick: (fund: Fund) => void;
@@ -18,58 +19,52 @@ interface DashboardProps {
   onManageGroups: () => void;
 }
 
-// 修改 formatMoney 支持隐私模式
 const formatMoney = (val: number, isHidden: boolean) => {
   if (isHidden) return '****';
   return val.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
-// Skeleton Component
-const Skeleton = ({ className }: { className: string }) => (
-    <div className={`animate-pulse bg-slate-200 dark:bg-slate-700 rounded ${className}`}></div>
-);
-
-// Market Status Component
-const MarketStatus = () => {
-    const [status, setStatus] = useState<{label: string, icon: any, color: string}>({label: '加载中', icon: Clock, color: 'text-slate-400'});
+const SourceBadge = ({ source }: { source?: string }) => {
+    if (!source) return null;
     
+    // LV1: Official
+    if (source.includes('LV1')) {
+         return <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold border border-transparent bg-green-50 text-green-600 dark:bg-green-900/30"><ShieldCheck size={10} /> 官方估值</span>;
+    }
+    // LV2: Proxy
+    if (source.includes('LV2')) {
+         return <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold border border-transparent bg-indigo-50 text-indigo-500 dark:bg-indigo-900/30"><Zap size={10} /> 场内映射</span>;
+    }
+    // LV3: Holdings
+    if (source.includes('LV3')) {
+         return <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold border border-transparent bg-blue-50 text-blue-500 dark:bg-blue-900/30"><Microscope size={10} /> 重仓穿透</span>;
+    }
+    // LV4: None
+    return null;
+};
+
+const MarketStatus = () => {
+    const [status, setStatus] = useState<{label: string, icon: any, color: string}>({label: '...', icon: Clock, color: 'text-slate-400'});
     useEffect(() => {
-        const checkStatus = () => {
+        const check = () => {
             const now = new Date();
             const day = now.getDay();
             const hour = now.getHours();
             const min = now.getMinutes();
             const timeVal = hour * 60 + min;
-
-            if (day === 0 || day === 6) {
-                setStatus({label: '周末休市', icon: Moon, color: 'text-blue-400'});
-                return;
-            }
-            
-            // 9:30 = 570, 11:30 = 690, 13:00 = 780, 15:00 = 900
-            if (timeVal < 570) {
-                 setStatus({label: '等待开盘', icon: Coffee, color: 'text-orange-400'});
-            } else if (timeVal >= 570 && timeVal < 690) {
-                 setStatus({label: '盘中交易', icon: Zap, color: 'text-green-500 animate-pulse'});
-            } else if (timeVal >= 690 && timeVal < 780) {
-                 setStatus({label: '午间休市', icon: Coffee, color: 'text-slate-400'});
-            } else if (timeVal >= 780 && timeVal < 900) {
-                 setStatus({label: '盘中交易', icon: Zap, color: 'text-green-500 animate-pulse'});
-            } else {
-                 setStatus({label: '已收盘', icon: Moon, color: 'text-blue-400'});
-            }
+            if (day === 0 || day === 6) setStatus({label: '周末休市', icon: Moon, color: 'text-blue-400'});
+            else if (timeVal < 570) setStatus({label: '等待开盘', icon: Coffee, color: 'text-orange-400'});
+            else if ((timeVal >= 570 && timeVal < 690) || (timeVal >= 780 && timeVal < 900)) setStatus({label: '盘中交易', icon: Zap, color: 'text-green-500 animate-pulse'});
+            else if (timeVal >= 690 && timeVal < 780) setStatus({label: '午间休市', icon: Coffee, color: 'text-slate-400'});
+            else setStatus({label: '已收盘', icon: Moon, color: 'text-blue-400'});
         };
-        
-        checkStatus();
-        const interval = setInterval(checkStatus, 60000);
-        return () => clearInterval(interval);
+        check();
+        const itv = setInterval(check, 60000);
+        return () => clearInterval(itv);
     }, []);
-
-    const Icon = status.icon;
-
     return (
         <div className={`flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-full bg-white/10 backdrop-blur-md border border-white/10 ${status.color}`}>
-            <Icon size={10} />
+            <status.icon size={10} />
             <span>{status.label}</span>
         </div>
     );
@@ -83,298 +78,109 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   const groupStats = useMemo(() => {
     return groups.map(group => {
-        const groupFunds = funds.filter(f => f.groupId === group.id);
-        const marketValue = groupFunds.reduce((acc, f) => acc + (f.estimatedNav * f.holdingShares), 0);
-        const todayProfit = groupFunds.reduce((acc, f) => acc + f.estimatedProfit, 0);
-        
-        let totalRet = 0;
-        groupFunds.forEach(f => {
-             const mv = f.estimatedNav * f.holdingShares;
-             const cost = f.holdingCost * f.holdingShares;
-             totalRet += (mv - cost + (f.realizedProfit || 0));
-        });
-
-        return {
-            ...group,
-            marketValue,
-            todayProfit,
-            totalReturn: totalRet,
-            count: groupFunds.length
-        };
+        const gFunds = funds.filter(f => f.groupId === group.id && f.holdingShares > 0);
+        const mv = gFunds.reduce((acc, f) => acc + (f.estimatedNav * f.holdingShares), 0);
+        const tp = gFunds.reduce((acc, f) => acc + f.estimatedProfit, 0);
+        const tr = gFunds.reduce((acc, f) => acc + ((f.estimatedNav - f.holdingCost) * f.holdingShares + (f.realizedProfit || 0)), 0);
+        return { ...group, marketValue: mv, todayProfit: tp, totalReturn: tr, count: gFunds.length };
     }).sort((a, b) => b.marketValue - a.marketValue);
   }, [funds, groups]);
 
-  // Calculated Totals
   const displayTotalReturn = useMemo(() => {
-      let ret = 0;
-      funds.forEach(f => {
-          const marketValue = f.estimatedNav * f.holdingShares;
-          const costValue = f.holdingCost * f.holdingShares;
-          const unrealized = marketValue - costValue;
-          ret += (unrealized + (f.realizedProfit || 0));
-      });
-      return ret;
-  }, [funds]);
-
-
-  // --- Handlers ---
-  const handleGroupTabClick = (groupId: string) => {
-      setViewMode('FUNDS');
-      onGroupChange(groupId);
-  };
-
-  const handleSummaryClick = () => {
-      if (currentGroupId !== 'all') {
-          onGroupChange('all');
-      }
-      setViewMode('SUMMARY');
-  };
-
-  const handleGroupCardClick = (groupId: string) => {
-      onGroupChange(groupId);
-      setViewMode('FUNDS');
-  };
+      const targetFunds = currentGroupId === 'all' 
+          ? funds.filter(f => !f.isWatchlist && f.holdingShares > 0)
+          : funds.filter(f => !f.isWatchlist && f.holdingShares > 0 && f.groupId === currentGroupId);
+      return targetFunds.reduce((acc, f) => acc + ((f.estimatedNav - f.holdingCost) * f.holdingShares + (f.realizedProfit || 0)), 0);
+  }, [funds, currentGroupId]);
 
   const isSummary = viewMode === 'SUMMARY';
 
   return (
     <div className="space-y-3 pb-24">
-      
-      {/* Navigation / Mode Switcher */}
+      {/* Group Tabs */}
       <div className="px-4 pt-2 flex items-center gap-2 overflow-x-auto no-scrollbar">
-         {/* 调整位置：汇总在第一个 */}
-         <button 
-             onClick={handleSummaryClick}
-             className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1 flex-shrink-0 ${
-                 isSummary
-                 ? 'bg-indigo-600 text-white shadow-md border border-indigo-600'
-                 : 'bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-800'
-             }`}
-         >
-             <LayoutDashboard size={12} /> 汇总
-         </button>
-
-         <button 
-             onClick={() => handleGroupTabClick('all')}
-             className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition flex-shrink-0 ${
-                 currentGroupId === 'all' && !isSummary
-                 ? 'bg-slate-800 text-white shadow-md dark:bg-white dark:text-slate-900' 
-                 : 'bg-white text-slate-500 border border-slate-200 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400'
-             }`}
-         >
-             全部
-         </button>
-
+         <button onClick={() => setViewMode('SUMMARY')} className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1 flex-shrink-0 ${isSummary ? 'bg-indigo-600 text-white shadow-md' : 'bg-white dark:bg-slate-800 text-slate-500 border dark:border-slate-700'}`}><LayoutDashboard size={12}/> 汇总</button>
+         <button onClick={() => { setViewMode('FUNDS'); onGroupChange('all'); }} className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition flex-shrink-0 ${currentGroupId === 'all' && !isSummary ? 'bg-slate-800 text-white dark:bg-white dark:text-slate-900' : 'bg-white dark:bg-slate-800 text-slate-500 border dark:border-slate-700'}`}>全部</button>
          {groups.map(g => (
-             <button
-                 key={g.id}
-                 onClick={() => handleGroupTabClick(g.id)}
-                 className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition flex-shrink-0 ${
-                     currentGroupId === g.id && !isSummary
-                     ? 'bg-blue-600 text-white shadow-md'
-                     : 'bg-white text-slate-500 border border-slate-200 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400'
-                 }`}
-             >
-                 {g.name}
-             </button>
+             <button key={g.id} onClick={() => { setViewMode('FUNDS'); onGroupChange(g.id); }} className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition flex-shrink-0 ${currentGroupId === g.id && !isSummary ? 'bg-blue-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-500 border dark:border-slate-700'}`}>{g.name}</button>
          ))}
-
-         <button
-            onClick={onManageGroups}
-            className="whitespace-nowrap px-2.5 py-1.5 rounded-full text-xs font-bold bg-slate-100 text-slate-400 border border-transparent dark:bg-slate-800 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700 transition flex items-center gap-1 flex-shrink-0"
-            title="管理分组"
-         >
-            <Plus size={14} />
-         </button>
+         <button onClick={onManageGroups} className="p-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-400"><Plus size={16}/></button>
       </div>
 
-      {/* Asset Card - Compact for Mobile */}
-      <div className="mx-3 relative overflow-hidden rounded-xl shadow-lg transition-all duration-300 group">
-        <div className={`absolute inset-0 ${
-             isSummary 
-             ? 'bg-gradient-to-br from-indigo-600 via-purple-700 to-indigo-800' 
-             : 'bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-800'
-        }`}></div>
+      {/* Asset Card */}
+      <div className={`mx-3 relative overflow-hidden rounded-2xl shadow-xl p-5 text-white transition-all duration-500 ${isSummary ? 'bg-gradient-to-br from-indigo-600 to-purple-700' : 'bg-gradient-to-br from-blue-600 to-indigo-800'}`}>
+        <div className="flex justify-between items-center mb-4">
+            <span className="text-white/80 text-[10px] font-bold bg-white/10 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                {isSummary ? <><LayoutDashboard size={12}/> 多账户汇总</> : (currentGroupId === 'all' ? '总资产' : groups.find(g => g.id === currentGroupId)?.name)}
+            </span>
+            <div className="flex items-center gap-2">
+                <MarketStatus />
+                <button onClick={onRefresh} className="bg-white/20 p-1.5 rounded-full active:scale-90"><RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''}/></button>
+            </div>
+        </div>
         
-        {/* Decorative Circles */}
-        <div className="absolute -top-10 -right-10 w-32 h-32 bg-white/10 rounded-full blur-xl"></div>
-        <div className="absolute -bottom-10 -left-10 w-32 h-32 bg-white/10 rounded-full blur-xl"></div>
+        <div className="text-3xl font-black mb-5 tracking-tighter">
+            <span className="text-lg font-normal opacity-60 mr-1">¥</span>
+            {isRefreshing ? '......' : formatMoney(totalMarketValue, isPrivacyMode)}
+        </div>
 
-        <div className="relative p-5 text-white">
-            <div className="flex justify-between items-center mb-4">
-                <span className="text-white/80 text-xs font-medium flex items-center gap-1 backdrop-blur-sm bg-white/10 px-2 py-0.5 rounded-lg">
-                    {isSummary ? <><LayoutDashboard size={12}/> 多账户总资产</> : (currentGroupId === 'all' ? '总资产' : groups.find(g => g.id === currentGroupId)?.name || '分组资产')}
-                </span>
-                
-                {/* Market Status & Refresh */}
-                <div className="flex items-center gap-2">
-                    <MarketStatus />
-                    <div 
-                        className="bg-white/20 p-1.5 rounded-full cursor-pointer hover:bg-white/30 transition active:scale-90 backdrop-blur-md" 
-                        onClick={onRefresh}
-                    >
-                        <RefreshCw size={14} className={`text-white ${isRefreshing ? 'animate-spin' : ''}`} />
-                    </div>
-                </div>
+        <div className="grid grid-cols-2 gap-4 bg-black/10 rounded-xl p-3 backdrop-blur-sm">
+            <div>
+                <div className="text-white/60 text-[10px] mb-1">今日预估</div>
+                <div className={`text-base font-bold ${totalProfit >= 0 ? 'text-red-300' : 'text-green-300'}`}>{formatMoney(totalProfit, isPrivacyMode)}</div>
             </div>
-            
-            <div className="text-3xl font-black mb-5 tracking-tight flex items-baseline gap-1 min-h-[40px]">
-                <span className="text-lg font-normal opacity-80">{isPrivacyMode ? '' : '¥'}</span>
-                {isRefreshing ? <Skeleton className="h-8 w-40 bg-white/20" /> : formatMoney(totalMarketValue, isPrivacyMode)}
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 bg-black/10 rounded-lg p-3 backdrop-blur-sm border border-white/5">
-                <div>
-                    <div className="text-white/70 text-[10px] mb-1">今日预估盈亏</div>
-                    <div className={`text-base font-bold flex items-center ${totalProfit >= 0 ? 'text-red-300' : 'text-green-300'}`}>
-                    {isRefreshing ? <Skeleton className="h-5 w-20 bg-white/20" /> : (
-                        <>{!isPrivacyMode && totalProfit > 0 ? '+' : ''}{formatMoney(totalProfit, isPrivacyMode)}</>
-                    )}
-                    </div>
-                </div>
-                <div className="text-right">
-                    <div className="text-white/70 text-[10px] mb-1">累计持有收益</div>
-                    <div className={`text-base font-bold flex justify-end ${displayTotalReturn >= 0 ? 'text-red-300' : 'text-green-300'}`}>
-                    {isRefreshing ? <Skeleton className="h-5 w-20 bg-white/20" /> : (
-                        <>{!isPrivacyMode && displayTotalReturn > 0 ? '+' : ''}{formatMoney(displayTotalReturn, isPrivacyMode)}</>
-                    )}
-                    </div>
-                </div>
-            </div>
-
-            <div className="text-right text-[10px] text-white/40 mt-2">
-                 更新于 {lastUpdate.toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit', second: '2-digit'})}
+            <div className="text-right">
+                <div className="text-white/60 text-[10px] mb-1">持有收益</div>
+                <div className={`text-base font-bold ${displayTotalReturn >= 0 ? 'text-red-300' : 'text-green-300'}`}>{formatMoney(displayTotalReturn, isPrivacyMode)}</div>
             </div>
         </div>
       </div>
 
-      {/* Content List */}
-      <div className="px-3">
-        
-        <div className="space-y-2.5">
-          
-          {/* Summary Mode */}
-          {isSummary && groupStats.map((group, idx) => (
-              <div 
-                  key={group.id}
-                  onClick={() => handleGroupCardClick(group.id)}
-                  className="bg-white dark:bg-slate-900 rounded-xl p-3 shadow-sm border border-slate-100 dark:border-slate-800 hover:shadow-md transition-all cursor-pointer active:scale-[0.99] group relative overflow-hidden"
-              >
-                  <div className="absolute left-0 top-0 bottom-0 w-1" style={{backgroundColor: SUMMARY_COLORS[idx % SUMMARY_COLORS.length]}}></div>
-                  
-                  <div className="flex justify-between items-center mb-2 pl-2">
-                      <div className="flex items-center gap-2">
-                          <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm">{group.name}</h3>
-                          <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 px-1.5 py-0.5 rounded-full">{group.count} 只</span>
+      {/* Content */}
+      <div className="px-3 space-y-2.5">
+          {isSummary ? groupStats.map(group => (
+              <div key={group.id} onClick={() => { onGroupChange(group.id); setViewMode('FUNDS'); }} className="bg-white dark:bg-slate-900 rounded-xl p-3 border dark:border-slate-800 flex justify-between items-center cursor-pointer active:scale-98 transition shadow-sm">
+                  <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-indigo-50 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-500"><Wallet size={20}/></div>
+                      <div>
+                          <div className="font-bold text-sm">{group.name}</div>
+                          <div className="text-[10px] text-slate-400">{group.count} 只基金</div>
                       </div>
-                      <ChevronRight size={16} className="text-slate-300 group-hover:text-blue-500 transition-colors" />
                   </div>
-
-                  <div className="grid grid-cols-3 gap-2 pl-2">
-                      <div className="col-span-1">
-                          <div className="text-[10px] text-slate-400 mb-0.5">资产</div>
-                          <div className="text-xs font-bold text-slate-800 dark:text-slate-100">{formatMoney(group.marketValue, isPrivacyMode)}</div>
-                      </div>
-                      <div className="col-span-1 text-center">
-                          <div className="text-[10px] text-slate-400 mb-0.5">今日</div>
-                          <div className={`text-xs font-bold ${group.todayProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                              {!isPrivacyMode && group.todayProfit > 0 ? '+' : ''}{isPrivacyMode ? '****' : group.todayProfit.toFixed(0)}
+                  <div className="text-right">
+                      <div className="text-sm font-black">{formatMoney(group.marketValue, isPrivacyMode)}</div>
+                      <div className={`text-[10px] font-bold ${group.todayProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>{group.todayProfit > 0 ? '+' : ''}{group.todayProfit.toFixed(0)}</div>
+                  </div>
+              </div>
+          )) : funds.filter(f => !f.isWatchlist && f.holdingShares > 0 && (currentGroupId === 'all' || f.groupId === currentGroupId)).map(fund => (
+              <div key={fund.id} onClick={() => onFundClick(fund)} className="bg-white dark:bg-slate-900 rounded-xl p-3 border dark:border-slate-800 shadow-sm active:scale-98 transition cursor-pointer">
+                  <div className="flex justify-between items-start mb-2">
+                      <div className="flex-1 overflow-hidden mr-2">
+                          <div className="flex items-center gap-2 mb-0.5">
+                              <h3 className="font-bold text-sm truncate">{fund.name}</h3>
+                              <SourceBadge source={fund.source} />
                           </div>
+                          <div className="text-[10px] text-slate-400 font-mono">{fund.code}</div>
                       </div>
-                      <div className="col-span-1 text-right">
-                          <div className="text-[10px] text-slate-400 mb-0.5">累计</div>
-                          <div className={`text-xs font-bold ${group.totalReturn >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                              {!isPrivacyMode && group.totalReturn > 0 ? '+' : ''}{isPrivacyMode ? '****' : group.totalReturn.toFixed(0)}
-                          </div>
+                      <div className={`text-base font-black ${fund.estimatedChangePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>{fund.estimatedChangePercent > 0 ? '+' : ''}{fund.estimatedChangePercent}%</div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mt-2 pt-2 border-t dark:border-slate-800">
+                      <div>
+                          <div className="text-[10px] text-slate-400">持仓</div>
+                          <div className="text-xs font-bold">{formatMoney(fund.estimatedNav * fund.holdingShares, isPrivacyMode)}</div>
+                      </div>
+                      <div className="text-center">
+                          <div className="text-[10px] text-slate-400">今日</div>
+                          <div className={`text-xs font-bold ${fund.estimatedProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>{isPrivacyMode ? '****' : fund.estimatedProfit.toFixed(1)}</div>
+                      </div>
+                      <div className="text-right">
+                          <div className="text-[10px] text-slate-400">收益</div>
+                          <div className={`text-xs font-bold ${((fund.estimatedNav - fund.holdingCost) * fund.holdingShares + (fund.realizedProfit || 0)) >= 0 ? 'text-up-red' : 'text-down-green'}`}>{isPrivacyMode ? '****' : ((fund.estimatedNav - fund.holdingCost) * fund.holdingShares + (fund.realizedProfit || 0)).toFixed(1)}</div>
                       </div>
                   </div>
               </div>
           ))}
-
-          {/* Funds Mode */}
-          {!isSummary && funds.length === 0 && (
-              <div className="text-center py-8 text-slate-400 bg-white dark:bg-slate-900 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
-                  <div className="mx-auto w-12 h-12 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-2">
-                     <LayoutDashboard size={20} className="opacity-50" />
-                  </div>
-                  <p className="text-xs">暂无基金</p>
-                  <p className="text-[10px] mt-1 opacity-60">点击右上角 + 号添加</p>
-              </div>
-          )}
-
-          {!isSummary && funds.filter(f => f.holdingShares > 0).map((fund) => {
-             // Calculate metrics for display
-             const marketValue = fund.estimatedNav * fund.holdingShares;
-             const totalReturn = (fund.estimatedNav - fund.holdingCost) * fund.holdingShares + (fund.realizedProfit || 0);
-
-             return (
-                <div 
-                    key={fund.id} 
-                    onClick={() => onFundClick(fund)}
-                    className="bg-white dark:bg-slate-900 rounded-xl p-3 shadow-sm border border-slate-100 dark:border-slate-800 hover:shadow-md transition-all cursor-pointer active:scale-[0.99] relative"
-                >
-                {/* Source Indicator */}
-                {fund.source === 'holdings_calc_batch' && (
-                    <div className="absolute top-3 right-3 flex items-center gap-1">
-                        <span className="relative flex h-2 w-2">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
-                        </span>
-                    </div>
-                )}
-
-                {/* Row 1: Name and Change % */}
-                <div className="flex justify-between items-start mb-2 pr-6">
-                    <div>
-                        <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm leading-tight mb-0.5 line-clamp-1">{fund.name || fund.code}</h3>
-                        <div className="flex items-center gap-2 text-[10px] text-slate-400">
-                            <span className="bg-slate-50 dark:bg-slate-800 px-1 rounded font-mono">{fund.code}</span>
-                            {fund.tags && fund.tags[0] && <span>{fund.tags[0]}</span>}
-                        </div>
-                    </div>
-                    <div className={`text-base font-black ${fund.estimatedChangePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                        {isRefreshing ? <Skeleton className="h-5 w-12" /> : (
-                            <>{fund.estimatedChangePercent > 0 ? '+' : ''}{fund.estimatedChangePercent}%</>
-                        )}
-                    </div>
-                </div>
-
-                {/* Separator */}
-                <div className="h-px bg-slate-50 dark:bg-slate-800 mb-2"></div>
-
-                {/* Row 2: Detailed Stats Grid */}
-                <div className="grid grid-cols-3 gap-2">
-                    <div className="col-span-1">
-                        <div className="text-[10px] text-slate-400 mb-0.5">持仓金额</div>
-                        <div className="text-xs font-bold text-slate-700 dark:text-slate-200">
-                            {isRefreshing ? <Skeleton className="h-4 w-16" /> : formatMoney(marketValue, isPrivacyMode)}
-                        </div>
-                    </div>
-                    <div className="col-span-1 text-center border-l border-slate-50 dark:border-slate-800">
-                        <div className="text-[10px] text-slate-400 mb-0.5">当日盈亏</div>
-                        <div className={`text-xs font-bold ${fund.estimatedProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                            {isRefreshing ? <Skeleton className="h-4 w-12 mx-auto" /> : (
-                                <>{!isPrivacyMode && fund.estimatedProfit > 0 ? '+' : ''}{isPrivacyMode ? '****' : fund.estimatedProfit.toFixed(2)}</>
-                            )}
-                        </div>
-                    </div>
-                    <div className="col-span-1 text-right border-l border-slate-50 dark:border-slate-800">
-                        <div className="text-[10px] text-slate-400 mb-0.5">持有盈亏</div>
-                        <div className={`text-xs font-bold ${totalReturn >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                            {isRefreshing ? <Skeleton className="h-4 w-12 ml-auto" /> : (
-                                <>{!isPrivacyMode && totalReturn > 0 ? '+' : ''}{isPrivacyMode ? '****' : totalReturn.toFixed(2)}</>
-                            )}
-                        </div>
-                    </div>
-                </div>
-                </div>
-            );
-          })}
-        </div>
       </div>
     </div>
   );
 };
-
-// Summary Colors for the bars
-const SUMMARY_COLORS = ['#2563eb', '#ef4444', '#f59e0b', '#22c55e', '#6366f1', '#ec4899'];
