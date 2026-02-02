@@ -20,14 +20,12 @@ import { Watchlist } from './components/Watchlist';
 import { MarketConfigModal } from './components/MarketConfigModal';
 
 // Icons
-import { LayoutGrid, PieChart, Settings, Bot, Plus, Moon, Sun, Monitor, Download, Upload, Users, X, Eye, EyeOff, Key, Copy, Clipboard, Trash2, AlertTriangle } from 'lucide-react';
+import { LayoutGrid, PieChart, Settings, Bot, Plus, Moon, Sun, Monitor, Download, Upload, Clipboard, ClipboardPaste, Users, X, Eye, EyeOff, PenTool, Key } from 'lucide-react';
 
 const NavBtn = ({ icon, label, isActive, onClick }: any) => (
-    <button onClick={onClick} className="flex flex-col items-center flex-1 pb-4 pt-2 transition select-none active:scale-90" style={{ color: isActive ? 'var(--tw-text-opacity)' : 'rgb(148, 163, 184)' }}>
-        <div className={`${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'}`}>
-            {React.cloneElement(icon, { strokeWidth: isActive ? 2.5 : 2 })}
-        </div>
-        <span className={`text-[10px] font-medium mt-1 ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'}`}>{label}</span>
+    <button onClick={onClick} className={`flex flex-col items-center w-14 pb-4 transition ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'}`}>
+        {React.cloneElement(icon, { strokeWidth: isActive ? 2.5 : 2 })}
+        <span className="text-[10px] font-medium mt-1">{label}</span>
     </button>
 );
 
@@ -51,6 +49,9 @@ const App: React.FC = () => {
   const [isManageGroupsOpen, setIsManageGroupsOpen] = useState(false);
   const [isMarketConfigOpen, setIsMarketConfigOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
+  
+  const [isImportTextOpen, setIsImportTextOpen] = useState(false);
+  const [importTextContent, setImportTextContent] = useState('');
 
   const [txModal, setTxModal] = useState<{ isOpen: boolean, fundId: string | null, type: TransactionType }>({
       isOpen: false, fundId: null, type: 'BUY'
@@ -61,6 +62,7 @@ const App: React.FC = () => {
   const [aiReport, setAiReport] = useState("");
   const [currentAnalyzingFund, setCurrentAnalyzingFund] = useState<string>("");
 
+  // Fix: Explicitly calculate totals based on current group
   const totals = useMemo(() => {
       const targetFunds = currentGroupId === 'all' 
           ? funds.filter(f => !f.isWatchlist && f.holdingShares > 0)
@@ -110,48 +112,8 @@ const App: React.FC = () => {
 
   const saveCustomApiKey = () => {
       localStorage.setItem('smartfund_custom_key', customApiKey.trim());
+      window.dispatchEvent(new Event('storage'));
       alert('API Key 已保存');
-  };
-
-  const handleExport = () => {
-      const data = exportData();
-      navigator.clipboard.writeText(data).then(() => {
-          alert('配置数据已复制到剪贴板，请粘贴保存到安全的地方。');
-      }).catch(() => {
-          alert('自动复制失败，请尝试手动复制。\n' + data.substring(0, 100) + '...');
-      });
-  };
-
-  const handleImport = async () => {
-      try {
-          const text = await navigator.clipboard.readText();
-          if (text && text.trim().startsWith('{')) {
-              if (importData(text)) {
-                  alert('数据导入成功，页面将刷新');
-                  window.location.reload();
-              } else {
-                  alert('剪贴板数据格式错误');
-              }
-          } else {
-             const manual = prompt('无法读取剪贴板，请在此处粘贴备份数据 (JSON格式):');
-             if (manual && importData(manual)) {
-                 window.location.reload();
-             }
-          }
-      } catch (e) {
-          const manual = prompt('无法读取剪贴板，请在此处粘贴备份数据 (JSON格式):');
-          if (manual && importData(manual)) {
-              window.location.reload();
-          }
-      }
-  };
-  
-  const handleClearData = () => {
-      if (confirm('⚠️ 警告：此操作将永久清空本地所有持仓、自选和设置数据！\n\n确定要继续吗？建议先备份数据。')) {
-          localStorage.clear();
-          alert('数据已清空，即将刷新页面。');
-          window.location.reload();
-      }
   };
 
   const handleAnalyze = async (fund: any) => {
@@ -163,10 +125,16 @@ const App: React.FC = () => {
     setAiLoading(false);
   };
 
+  const goToSettings = () => {
+      setActiveTab(TabView.SETTINGS);
+      setAIModalOpen(false);
+  };
+
   const handleConfirmTransaction = (t: Transaction) => {
       if (!txFund) return;
       let newShares = txFund.holdingShares;
       let newCost = txFund.holdingCost;
+      const newTransactions = [...(txFund.transactions || []), t];
       let realized = txFund.realizedProfit || 0;
       if (t.type === 'BUY') {
           const oldTotalCost = txFund.holdingShares * txFund.holdingCost;
@@ -178,8 +146,31 @@ const App: React.FC = () => {
           if (newShares <= 0) newCost = 0;
           realized += (t.nav - txFund.holdingCost) * t.shares - t.fee;
       }
-      addOrUpdateFund({ ...txFund, holdingShares: newShares, holdingCost: newCost, realizedProfit: realized, isWatchlist: newShares === 0 });
+      const isWatchlist = newShares === 0;
+      const newProfit = calculateFundMetrics(newShares, txFund.lastNav, txFund.estimatedNav, txFund.estimatedChangePercent);
+      addOrUpdateFund({ ...txFund, holdingShares: newShares, holdingCost: newCost, estimatedProfit: newProfit, realizedProfit: realized, transactions: newTransactions, isWatchlist: isWatchlist });
       setTxModal({ ...txModal, isOpen: false });
+  };
+
+  const handleDownloadBackup = () => {
+      const blob = new Blob([exportData()], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `smartfund_backup_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+  };
+
+  const handleImport = (content: string) => {
+      if (importData(content)) {
+          alert('数据导入成功，页面将刷新');
+          window.location.reload();
+      } else {
+          alert('数据格式无效');
+      }
   };
 
   const marketAvgChange = sectorIndices.length > 0 ? sectorIndices.reduce((acc, s) => acc + s.changePercent, 0) / sectorIndices.length : 0;
@@ -234,12 +225,13 @@ const App: React.FC = () => {
             </div>
         )}
 
-        {activeTab === TabView.AI_INSIGHTS && <AIChat onGoToSettings={() => setActiveTab(TabView.SETTINGS)} />}
+        {activeTab === TabView.TOOLS && <ToolsDashboard funds={funds} />}
+        {activeTab === TabView.BACKTEST && <BacktestDashboard availableFunds={funds} />}
+        {activeTab === TabView.AI_INSIGHTS && <AIChat onGoToSettings={goToSettings} />}
         {activeTab === TabView.SETTINGS && (
             <div className="p-6 space-y-4 animate-fade-in">
                 <h2 className="text-xl font-bold mb-4">设置</h2>
                 
-                {/* Theme Config */}
                 <div className="bg-white dark:bg-slate-900 rounded-xl p-4 flex justify-between items-center shadow-sm">
                     <span className="font-medium text-sm">外观模式</span>
                     <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
@@ -249,34 +241,27 @@ const App: React.FC = () => {
                     </div>
                 </div>
 
-                {/* API Key Config */}
                 <div className="bg-white dark:bg-slate-900 rounded-xl p-4 shadow-sm">
                     <div className="font-bold mb-3 flex items-center gap-2 text-sm"><Key size={16}/> Gemini API Key</div>
                     <input type="password" value={customApiKey} onChange={(e) => setCustomApiKey(e.target.value)} placeholder="粘贴您的 Google API Key..." className="w-full bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 rounded-lg px-3 py-2 text-sm mb-3 outline-none focus:border-blue-500" />
                     <button onClick={saveCustomApiKey} className="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-bold active:scale-95 transition">保存配置</button>
                 </div>
 
-                {/* Backup & Restore (Restored) */}
                 <div className="bg-white dark:bg-slate-900 rounded-xl p-4 shadow-sm">
-                    <div className="font-bold mb-3 text-sm flex items-center gap-2"><Upload size={16}/> 数据备份与恢复</div>
-                    <div className="grid grid-cols-2 gap-3">
-                        <button onClick={handleExport} className="bg-slate-50 dark:bg-slate-800 py-3 rounded-lg text-xs font-bold flex justify-center items-center gap-2 border dark:border-slate-700 active:bg-slate-200 dark:active:bg-slate-700 transition">
-                            <Copy size={14}/> 复制配置
-                        </button>
-                        <button onClick={handleImport} className="bg-slate-50 dark:bg-slate-800 py-3 rounded-lg text-xs font-bold flex justify-center items-center gap-2 border dark:border-slate-700 active:bg-slate-200 dark:active:bg-slate-700 transition">
-                            <Clipboard size={14}/> 粘贴导入
-                        </button>
+                    <div className="font-bold mb-3 text-sm flex items-center gap-2"><Upload size={16}/> 数据备份</div>
+                    <div className="grid grid-cols-2 gap-3 mb-3">
+                        <button onClick={handleDownloadBackup} className="bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 py-2 rounded-lg text-xs font-bold flex justify-center gap-2"><Download size={14}/> 导出文件</button>
+                        <label className="bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 py-2 rounded-lg text-xs font-bold flex justify-center gap-2 cursor-pointer"><Upload size={14}/> 导入文件 <input type="file" accept=".json" onChange={(e) => { const f = e.target.files?.[0]; if(f) { const r = new FileReader(); r.onload = (ev) => handleImport(ev.target?.result as string); r.readAsText(f); } }} className="hidden" /></label>
                     </div>
-                    <p className="text-[10px] text-slate-400 mt-2 text-center">所有数据仅保存在本地浏览器中，请定期备份防止丢失。</p>
+                    <div className="grid grid-cols-2 gap-3">
+                         <button onClick={() => { navigator.clipboard.writeText(exportData()); alert("已复制"); }} className="bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 py-2 rounded-lg text-xs font-bold flex justify-center gap-2"><Clipboard size={14}/> 复制文本</button>
+                         <button onClick={() => setIsImportTextOpen(true)} className="bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 py-2 rounded-lg text-xs font-bold flex justify-center gap-2"><ClipboardPaste size={14}/> 粘贴文本</button>
+                    </div>
                 </div>
 
-                {/* Clear Data Zone */}
-                <div className="bg-red-50 dark:bg-red-900/10 rounded-xl p-4 border border-red-100 dark:border-red-900/30">
-                    <div className="font-bold mb-2 text-sm text-red-600 flex items-center gap-2"><AlertTriangle size={16}/> 危险区域</div>
-                    <p className="text-xs text-red-500/80 mb-3">此操作将清空所有本地存储的基金持仓、自选列表及设置信息，且无法撤销。</p>
-                    <button onClick={handleClearData} className="w-full bg-white dark:bg-red-900/20 text-red-500 border border-red-200 dark:border-red-800 py-2.5 rounded-lg text-xs font-bold active:scale-95 transition flex items-center justify-center gap-2">
-                        <Trash2 size={14}/> 清空所有数据
-                    </button>
+                <div className="bg-white dark:bg-slate-900 rounded-xl p-4 flex justify-between items-center border border-red-50 dark:border-red-900/30">
+                    <span className="text-red-500 font-medium text-sm">重置所有数据</span>
+                    <button onClick={() => { if(confirm("确定清空？")) { localStorage.clear(); window.location.reload(); } }} className="text-xs border border-red-200 text-red-500 px-3 py-1 rounded-full">清空</button>
                 </div>
             </div>
         )}
@@ -286,31 +271,44 @@ const App: React.FC = () => {
         <NavBtn icon={<LayoutGrid size={22}/>} label="资产" isActive={activeTab === TabView.DASHBOARD} onClick={() => setActiveTab(TabView.DASHBOARD)} />
         <NavBtn icon={<Eye size={22}/>} label="自选" isActive={activeTab === TabView.WATCHLIST} onClick={() => setActiveTab(TabView.WATCHLIST)} />
         <NavBtn icon={<PieChart size={22}/>} label="市场" isActive={activeTab === TabView.MARKET} onClick={() => setActiveTab(TabView.MARKET)} />
-        {/* AI Assistant Button positioned to the left of Settings */}
-        <NavBtn icon={<Bot size={22}/>} label="AI助手" isActive={activeTab === TabView.AI_INSIGHTS} onClick={() => setActiveTab(TabView.AI_INSIGHTS)} />
-        <NavBtn icon={<Settings size={22}/>} label="设置" isActive={activeTab === TabView.SETTINGS || activeTab === TabView.TOOLS} onClick={() => setActiveTab(TabView.SETTINGS)} />
+        <NavBtn icon={<PenTool size={22}/>} label="工具" isActive={activeTab === TabView.TOOLS} onClick={() => setActiveTab(TabView.TOOLS)} />
+        <button onClick={() => setActiveTab(TabView.AI_INSIGHTS)} className="flex flex-col items-center w-14 pb-4 active:scale-95 transition">
+             <div className={`p-1.5 rounded-xl mb-0.5 ${activeTab === TabView.AI_INSIGHTS ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400'}`}><Bot size={20} /></div>
+             <span className={`text-[10px] font-medium ${activeTab === TabView.AI_INSIGHTS ? 'text-indigo-600' : 'text-slate-400'}`}>AI</span>
+        </button>
+        <NavBtn icon={<Settings size={22}/>} label="设置" isActive={activeTab === TabView.SETTINGS} onClick={() => setActiveTab(TabView.SETTINGS)} />
       </nav>
 
-      <AIModal isOpen={isAIModalOpen} onClose={() => setAIModalOpen(false)} fundName={currentAnalyzingFund} report={aiReport} isLoading={aiLoading} onGoToSettings={() => setActiveTab(TabView.SETTINGS)} />
+      {isImportTextOpen && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={() => setIsImportTextOpen(false)}>
+            <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-2xl p-6" onClick={e => e.stopPropagation()}>
+                <textarea value={importTextContent} onChange={(e) => setImportTextContent(e.target.value)} placeholder="粘贴 JSON..." className="w-full h-32 p-3 text-xs border rounded-xl mb-4 bg-slate-50 dark:bg-slate-800 dark:text-white" />
+                <button onClick={() => handleImport(importTextContent)} className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl">导入</button>
+            </div>
+          </div>
+      )}
+
+      <AIModal isOpen={isAIModalOpen} onClose={() => setAIModalOpen(false)} fundName={currentAnalyzingFund} report={aiReport} isLoading={aiLoading} onGoToSettings={goToSettings} />
       <FundFormModal isOpen={isAddModalOpen} onClose={() => setAddModalOpen(false)} onSave={addOrUpdateFund} initialFund={editingFund} groups={groups} currentGroupId={currentGroupId} isWatchlistMode={isWatchlistMode} />
       <MarketConfigModal isOpen={isMarketConfigOpen} onClose={() => setIsMarketConfigOpen(false)} currentCodes={marketCodes} onSave={updateMarketCodes} />
+      
       {txModal.isOpen && txFund && <TransactionModal isOpen={txModal.isOpen} onClose={() => setTxModal({ ...txModal, isOpen: false })} fund={txFund} type={txModal.type} onConfirm={handleConfirmTransaction} />}
       
       {isManageGroupsOpen && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={() => setIsManageGroupsOpen(false)}>
             <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-xs p-6" onClick={e => e.stopPropagation()}>
                 <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Users size={20} className="text-blue-600"/> 分组管理</h3>
-                <div className="space-y-3 mb-6 max-h-60 overflow-y-auto pr-2 no-scrollbar">
+                <div className="space-y-3 mb-6 max-h-60 overflow-y-auto">
                     {groups.map(g => (
-                        <div key={g.id} className="flex justify-between items-center bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-slate-700">
-                            <span className="font-bold text-sm">{g.name}</span>
-                            {!g.isDefault && <button onClick={() => removeGroup(g.id)} className="text-slate-400 hover:text-red-500 p-1"><X size={16}/></button>}
+                        <div key={g.id} className="flex justify-between items-center bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-100 dark:border-slate-700">
+                            <span className="font-medium dark:text-slate-200">{g.name}</span>
+                            {!g.isDefault && <button onClick={() => removeGroup(g.id)} className="text-slate-400 hover:text-red-500"><X size={18}/></button>}
                         </div>
                     ))}
                 </div>
                 <div className="flex gap-2">
-                    <input type="text" value={newGroupName} onChange={e => setNewGroupName(e.target.value)} placeholder="新分组名..." className="flex-1 border dark:border-slate-700 rounded-xl px-3 py-2 text-sm dark:bg-slate-800" />
-                    <button onClick={() => { if(newGroupName) { addGroup(newGroupName); setNewGroupName(''); }}} className="bg-blue-600 text-white rounded-xl px-4 py-2 font-bold text-sm">添加</button>
+                    <input type="text" value={newGroupName} onChange={e => setNewGroupName(e.target.value)} placeholder="新分组名..." className="flex-1 border rounded-lg px-3 py-2 text-sm dark:bg-slate-800" />
+                    <button onClick={() => { if(newGroupName) { addGroup(newGroupName); setNewGroupName(''); }}} className="bg-blue-600 text-white rounded-lg px-4 py-2 font-bold text-sm">添加</button>
                 </div>
             </div>
           </div>
