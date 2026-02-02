@@ -138,15 +138,19 @@ class AkshareService:
             ts = int(time_module.time() * 1000)
             # 修正: 移除 gszzl_ 前缀，直接使用 js/{code}.js
             url = f"http://fundgz.1234567.com.cn/js/{code}.js?rt={ts}"
+            
+            # 日志记录请求 URL，方便验证
+            # logger.info(f"Requesting Estimate: {url}")
+
             # 必须设置 Referer 否则可能被拒
             headers = AkshareService.get_headers()
             
             resp = GlobalSession.get().get(url, headers=headers, timeout=2.0)
             
             if resp.status_code == 200:
-                # 返回格式: jsonpgz({"fundcode":"001186","name":"...","jzrq":"2023-12-01","dwjz":"1.1234","gsz":"1.1111","gszzl":"-1.00","gztime":"..."});
-                # 使用 re.S (DOTALL) 让 . 匹配换行符
-                match = re.search(r'jsonpgz\((.*)\)', resp.text, re.S)
+                # 返回格式: jsonpgz({"fundcode":"001186", ...});
+                # 使用 re.S (DOTALL) 让 . 匹配换行符，使用 .*? 非贪婪匹配
+                match = re.search(r'jsonpgz\((.*?)\)', resp.text, re.S)
                 if match:
                     json_str = match.group(1)
                     # 去除可能存在的末尾分号等杂质
@@ -546,7 +550,7 @@ def status():
     return {
         "phase": AkshareService.get_time_phase(), 
         "ts": datetime.now().timestamp(),
-        "backend": "akshare_fix_v5"
+        "backend": "akshare_fix_v6"
     }
 
 @router.get("/search")
