@@ -230,8 +230,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </div>
             </div>
             
-             <div className="absolute bottom-2 right-4 text-[9px] text-white/30 font-medium">
-                 更新于: {lastUpdate.toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'})}
+             <div className="absolute top-4 right-4 text-[9px] text-white/40 font-medium">
+                 {lastUpdate.toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'})}
             </div>
         </div>
       </div>
@@ -268,13 +268,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       <div className="col-span-1 text-center">
                           <div className="text-[9px] text-slate-400">今日</div>
                           <div className={`text-xs font-bold ${group.todayProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                              {!isPrivacyMode && group.todayProfit > 0 ? '+' : ''}{isPrivacyMode ? '****' : group.todayProfit.toFixed(0)}
+                              {!isPrivacyMode && group.todayProfit > 0 ? '+' : ''}{isPrivacyMode ? '****' : group.todayProfit.toFixed(2)}
                           </div>
                       </div>
                       <div className="col-span-1 text-right">
                           <div className="text-[9px] text-slate-400">累计</div>
                           <div className={`text-xs font-bold ${group.totalReturn >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                              {!isPrivacyMode && group.totalReturn > 0 ? '+' : ''}{isPrivacyMode ? '****' : group.totalReturn.toFixed(0)}
+                              {!isPrivacyMode && group.totalReturn > 0 ? '+' : ''}{isPrivacyMode ? '****' : group.totalReturn.toFixed(2)}
                           </div>
                       </div>
                   </div>

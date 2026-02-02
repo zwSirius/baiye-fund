@@ -13,12 +13,12 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = ({ marketCodes, o
     const [isLoading, setIsLoading] = useState(true);
     const [rankType, setRankType] = useState<'GAIN' | 'LOSS'>('GAIN');
 
-    const loadData = async () => {
-        // Only set full loading state if we don't have data yet
-        if (!data) setIsLoading(true);
+    const loadData = async (force: boolean = false) => {
+        // Only set full loading state if we don't have data yet or if forced
+        if (!data || force) setIsLoading(true);
         
         try {
-            const res = await fetchMarketOverview(marketCodes);
+            const res = await fetchMarketOverview(marketCodes, force);
             if (res) {
                 setData(res);
             }
@@ -30,7 +30,8 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = ({ marketCodes, o
     };
 
     useEffect(() => {
-        loadData();
+        // Initial load (uses cache if available)
+        loadData(false);
     }, [marketCodes]);
 
     const Skeleton = ({ className }: { className: string }) => (
@@ -46,7 +47,7 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = ({ marketCodes, o
                     <BarChart3 className="text-blue-500" size={20}/> 市场全景
                 </h2>
                 <button 
-                    onClick={() => { setIsLoading(true); loadData(); }} 
+                    onClick={() => loadData(true)} 
                     className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 transition active:rotate-180"
                 >
                     <RefreshCw size={18} className={isLoading ? 'animate-spin' : ''} />
@@ -98,7 +99,7 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = ({ marketCodes, o
                             <span>领涨板块</span> <TrendingUp size={12}/>
                         </div>
                         <div className="space-y-2">
-                            {(isLoading && !data) ? [1,2,3,4,5].map(i => <Skeleton key={i} className="h-8 w-full"/>) : (
+                            {(isLoading && !data) ? [1,2,3].map(i => <Skeleton key={i} className="h-8 w-full"/>) : (
                                 data?.sectors.top.map((s, idx) => (
                                     <SectorRow key={s.name} rank={idx+1} name={s.name} change={s.changePercent} stock={s.leadingStock} type="up"/>
                                 ))
@@ -112,7 +113,7 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = ({ marketCodes, o
                             <span>领跌板块</span> <TrendingDown size={12}/>
                         </div>
                         <div className="space-y-2">
-                            {(isLoading && !data) ? [1,2,3,4,5].map(i => <Skeleton key={i} className="h-8 w-full"/>) : (
+                            {(isLoading && !data) ? [1,2,3].map(i => <Skeleton key={i} className="h-8 w-full"/>) : (
                                 data?.sectors.bottom.map((s, idx) => (
                                     <SectorRow key={s.name} rank={idx+1} name={s.name} change={s.changePercent} stock={s.leadingStock} type="down"/>
                                 ))

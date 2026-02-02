@@ -180,7 +180,18 @@ export const getFundHistoryData = async (fundCode: string) => {
     }
 };
 
-export const fetchMarketOverview = async (codes?: string[]): Promise<MarketOverview | null> => {
+// Client-side cache for market data
+let marketCache = {
+    data: null as MarketOverview | null,
+    timestamp: 0
+};
+
+export const fetchMarketOverview = async (codes?: string[], force: boolean = false): Promise<MarketOverview | null> => {
+    // 30 min cache
+    if (!force && marketCache.data && (Date.now() - marketCache.timestamp < 30 * 60 * 1000)) {
+        return marketCache.data;
+    }
+
     try {
         let url = `${API_BASE}/api/market/overview`;
         if (codes && codes.length > 0) {
@@ -188,10 +199,15 @@ export const fetchMarketOverview = async (codes?: string[]): Promise<MarketOverv
         }
         const response = await fetch(url);
         if (!response.ok) throw new Error("Market fetch failed");
-        return await response.json();
+        const data = await response.json();
+        
+        // Update cache
+        marketCache = { data, timestamp: Date.now() };
+        
+        return data;
     } catch (e) {
         console.warn("Market overview fetch failed:", e);
-        return null;
+        return marketCache.data; // Return stale data if failed
     }
 };
 

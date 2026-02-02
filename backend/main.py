@@ -56,7 +56,8 @@ class CacheService:
     def get(self, key: str, ttl: int = 60):
         entry = self._cache.get(key)
         if entry:
-            if time_module.time() - entry['time'] < ttl:
+            # 0 ttl means infinite (or manual invalidation)
+            if ttl == 0 or time_module.time() - entry['time'] < ttl:
                 return entry['data']
             else:
                 del self._cache[key]
@@ -123,8 +124,6 @@ class AkshareService:
                         except: pass
             elif market_type == 'HK':
                 # stock_hk_spot_em 似乎不稳定，此处尝试用 stock_hk_index_spot_em 或其他替代
-                # 为了保持持仓估算功能，我们尽量获取个股数据
-                # 如果失败，这里暂时返回空，不影响整体流程
                 try:
                     df = ak.stock_hk_spot() # 备用接口
                     if not df.empty:
@@ -197,22 +196,27 @@ class AkshareService:
         cache_service.set(key, result_map)
         return result_map
 
-    # --- 核心: 市场指数 (Strict Implementation) ---
+    # --- 核心: 市场指数 (Strict Implementation + Fallback) ---
     @staticmethod
     def fetch_global_indices_data_cached():
+        # 缓存时间延长，防止夜间频繁请求失败
         key = "global_indices_spot_map"
-        cached = cache_service.get(key, 120) 
+        cached = cache_service.get(key, 300) 
         if cached: return cached
 
         indices_map = {}
         
         # 1. A股指数: stock_zh_index_spot_em
-        # 必须遍历多个 symbol 以覆盖主要指数
-        zh_symbols = ["上证系列指数", "深证系列指数", "沪深重要指数", "指数成份"]
+        # 尝试多个 symbol 集合
+        zh_symbols = ["沪深重要指数", "上证系列指数", "深证系列指数", "指数成份"]
+        has_zh_data = False
+        
         for sym in zh_symbols:
+            if has_zh_data and len(indices_map) > 5: break 
             try:
                 df_zh = ak.stock_zh_index_spot_em(symbol=sym)
                 if not df_zh.empty:
+                    has_zh_data = True
                     for row in df_zh.itertuples():
                         try:
                             code = str(row.代码)
@@ -245,7 +249,6 @@ class AkshareService:
         except Exception as e: logger.warning(f"HK index fetch failed: {e}")
         
         # 3. 美股指数: index_us_stock_sina
-        # symbol choice: .IXIC, .DJI, .INX, .NDX
         us_targets = [".IXIC", ".DJI", ".INX", ".NDX"]
         us_names = {".IXIC": "纳斯达克", ".DJI": "道琼斯", ".INX": "标普500", ".NDX": "纳斯达克100"}
         
@@ -253,10 +256,7 @@ class AkshareService:
             try:
                 df_us = ak.index_us_stock_sina(symbol=sym)
                 if not df_us.empty:
-                    # df columns: date, open, high, low, close, volume, amount
-                    # data is historical daily k-line. Last row is latest.
                     last = df_us.iloc[-1]
-                    # Check if previous row exists for change calc
                     prev_close = df_us.iloc[-2]['close'] if len(df_us) > 1 else last['open']
                     
                     price = float(last['close'])
@@ -278,7 +278,6 @@ class AkshareService:
                 for row in df_global.itertuples():
                     try:
                         name = str(row.名称)
-                        # Only add if not exists to avoid overwriting better data
                         if name not in indices_map:
                             price = float(row.最新价)
                             change = round(float(row.涨跌幅), 2)
@@ -286,8 +285,42 @@ class AkshareService:
                     except: pass
         except: pass
 
+        # 如果获取失败，尝试读取旧缓存（即使过期）作为兜底
+        if not indices_map and cache_service._cache.get(key):
+             return cache_service._cache.get(key)['data']
+
         cache_service.set(key, indices_map)
         return indices_map
+
+    @staticmethod
+    def fetch_index_daily_fallback(symbol: str):
+        """
+        休市期间 Spot 接口可能返回空，使用日线数据兜底
+        Symbol 格式转换: 
+        1.xxxxxx -> shxxxxxx
+        0.xxxxxx -> szxxxxxx
+        100.HSI -> 港股? 需要 specific mapping
+        """
+        try:
+            ak_symbol = ""
+            if symbol.startswith('1.'):
+                ak_symbol = "sh" + symbol.split('.')[1]
+                df = ak.stock_zh_index_daily_em(symbol=ak_symbol)
+            elif symbol.startswith('0.'):
+                ak_symbol = "sz" + symbol.split('.')[1]
+                df = ak.stock_zh_index_daily_em(symbol=ak_symbol)
+            # 港美股暂不通过此接口兜底，因为Spot通常较稳，且API不同
+            
+            if ak_symbol and not df.empty:
+                last = df.iloc[-1]
+                prev = df.iloc[-2] if len(df) > 1 else last
+                
+                price = float(last['close'])
+                change = ((price - float(prev['close'])) / float(prev['close'])) * 100
+                return {"price": price, "change": round(change, 2)}
+        except Exception as e:
+            logger.warning(f"Index fallback failed for {symbol}: {e}")
+        return None
 
     # --- 其他基础接口 ---
     @staticmethod
@@ -374,15 +407,39 @@ class AkshareService:
 
     @staticmethod
     def fetch_sector_rankings_sync():
+        FILE_CACHE = "sectors_fallback.json"
         try:
             df = ak.stock_board_industry_name_em()
-            if df.empty: return {"top": [], "bottom": []}
-            df['涨跌幅'] = pd.to_numeric(df['涨跌幅'], errors='coerce').fillna(0)
-            df_sorted = df.sort_values(by='涨跌幅', ascending=False)
-            def extract(sub): return [{"name": r['板块名称'], "changePercent": float(r['涨跌幅']), "leadingStock": r['领涨股票']} for _, r in sub.iterrows()]
-            # 返回 Top 5 和 Bottom 5
-            return {"top": extract(df_sorted.head(5)), "bottom": extract(df_sorted.tail(5))}
-        except: return {"top": [], "bottom": []}
+            if not df.empty: 
+                df['涨跌幅'] = pd.to_numeric(df['涨跌幅'], errors='coerce').fillna(0)
+                df_sorted = df.sort_values(by='涨跌幅', ascending=False)
+                
+                def extract(sub): return [{"name": r['板块名称'], "changePercent": float(r['涨跌幅']), "leadingStock": r['领涨股票']} for _, r in sub.iterrows()]
+                
+                data = {"top": extract(df_sorted.head(5)), "bottom": extract(df_sorted.tail(5))}
+                
+                # Save to local file for persistence during restarts/maintenance
+                try:
+                    with open(FILE_CACHE, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False)
+                except: pass
+                
+                return data
+        except Exception as e:
+            logger.warning(f"Sector fetch error: {e}")
+        
+        # Fallback to file cache if API fails/empty (common at 1AM)
+        try:
+            if os.path.exists(FILE_CACHE):
+                with open(FILE_CACHE, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except: pass
+        
+        # Fallback to memory cache
+        cached = cache_service._cache.get("market_sectors")
+        if cached: return cached['data']
+        
+        return {"top": [], "bottom": []}
 
     @staticmethod
     def fetch_fund_rankings_sync():
@@ -419,11 +476,15 @@ class AkshareService:
 class FundController:
     @staticmethod
     async def get_search_results(key: str):
+        # 增加缓存时间到 24小时 (86400s)，并由 Startup Event 预热
         cached = cache_service.get("funds_list", 86400) 
         if not cached:
             cached = await run_in_threadpool(AkshareService.fetch_fund_list_sync)
             if cached: cache_service.set("funds_list", cached)
         if not cached: return []
+        
+        if not key: return [] # Empty key returns nothing
+        
         key = key.upper()
         res = []
         count = 0
@@ -498,6 +559,7 @@ class FundController:
             found = False
             clean_code = req_c.split('.')[-1]
             
+            # 1. Try Spot Map
             if clean_code in indices_spot_map:
                 data = indices_spot_map[clean_code]
                 indices.append({
@@ -517,6 +579,21 @@ class FundController:
                         "score": int(max(0, min(100, 50 + data['change'] * 10))),
                       })
                       found = True
+            
+            # 2. Last Resort: Try Fetching Daily History (for A-shares mostly)
+            if not found and (req_c.startswith('1.') or req_c.startswith('0.')):
+                try:
+                    fallback_data = await run_in_threadpool(AkshareService.fetch_index_daily_fallback, req_c)
+                    if fallback_data:
+                        indices.append({
+                            "name": code_to_name_map.get(req_c, req_c), 
+                            "code": req_c,
+                            "changePercent": fallback_data['change'], 
+                            "value": fallback_data['price'],
+                            "score": 50
+                        })
+                        found = True
+                except: pass
 
         sectors = cache_service.get("market_sectors", 1800) 
         if not sectors:
@@ -745,8 +822,15 @@ app = FastAPI(title="SmartFund API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 router = APIRouter(prefix="/api")
 
+@app.on_event("startup")
+async def startup_event():
+    # 预热基金列表缓存，避免第一次搜索卡顿
+    logger.info("Prefetching fund list...")
+    await FundController.get_search_results("")
+    logger.info("Fund list cached.")
+
 @router.get("/status")
-def status(): return { "phase": AkshareService.get_time_phase(), "ts": datetime.now().timestamp(), "version": "4.2" }
+def status(): return { "phase": AkshareService.get_time_phase(), "ts": datetime.now().timestamp(), "version": "4.5" }
 @router.get("/search")
 async def search(key: str = Query(..., min_length=1)): return await FundController.get_search_results(key)
 @router.get("/market/overview")
