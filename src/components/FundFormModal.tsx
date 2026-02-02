@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Fund, Group, Transaction } from '../types';
-import { searchFunds, fetchRealTimeEstimate } from '../services/fundService';
+import { searchFunds, fetchRealTimeEstimate, fetchFundDetails } from '../services/fundService';
 import { calculateFundMetrics } from '../utils/finance';
 import { X, Search, Loader2, Plus, Check, Users, DollarSign, PieChart, Eye, ArrowRight } from 'lucide-react';
 
@@ -80,7 +80,12 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
     setIsLoadingDetails(true);
 
     try {
-        const realData = await fetchRealTimeEstimate(fund.code);
+        // Parallel fetch: Real-time estimate AND Detailed Info (for smart tags)
+        // fetchFundDetails calls /api/fund/{code} which now returns smart industry tags
+        const [realData, detailedFund] = await Promise.all([
+            fetchRealTimeEstimate(fund.code),
+            fetchFundDetails(fund)
+        ]);
         
         let finalName = fund.name;
         let lastNav = 0;
@@ -100,9 +105,13 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
              source = realData.source || "official";
         }
 
+        // Use tags from detailedFund (which contains the smart industry tag)
+        const smartTags = detailedFund.tags && detailedFund.tags.length > 0 ? detailedFund.tags : fund.tags;
+
         const fundBase = {
             ...fund,
             name: finalName,
+            tags: smartTags, // Updated tags
             lastNav,
             lastNavDate,
             estimatedNav,
@@ -245,6 +254,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
                   <span className="text-sm font-bold text-slate-600 dark:text-slate-300">
                       {isWatchlistMode ? '正在添加到自选...' : '正在获取数据...'}
                   </span>
+                  <span className="text-xs text-slate-400 mt-1">分析持仓 & 行业归类中...</span>
               </div>
           )}
 

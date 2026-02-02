@@ -53,6 +53,7 @@ class CacheService:
         self._funds_list_cache = []
         self._funds_list_time = None
         self._holdings_cache = {}
+        self._industry_cache = {}
 
     def get_estimate(self, code: str):
         entry = self._estimate_cache.get(code)
@@ -76,6 +77,12 @@ class CacheService:
 
     def set_holdings(self, code: str, data: list):
         self._holdings_cache[code] = {"data": data, "time": datetime.now()}
+
+    def get_industry(self, code: str):
+        return self._industry_cache.get(code)
+
+    def set_industry(self, code: str, industry: str):
+        self._industry_cache[code] = industry
 
     async def get_funds_list(self):
         # List cache valid for 24 hours
@@ -147,7 +154,8 @@ class AkshareService:
         try:
             year = datetime.now().year
             all_dfs = []
-            for y in [year, year - 1]:
+            # Try current year and previous 2 years to ensure we get data
+            for y in [year, year - 1, year - 2]:
                 try:
                     df = ak.fund_portfolio_hold_em(symbol=code, date=y)
                     if not df.empty and '季度' in df.columns: all_dfs.append(df)
@@ -177,6 +185,23 @@ class AkshareService:
             return []
 
     @staticmethod
+    def fetch_industry_sync(code: str) -> str:
+        """Fetch industry allocation to tag the fund"""
+        try:
+            # Try current year
+            df = ak.fund_portfolio_industry_allocation_em(symbol=code, date=datetime.now().year)
+            if df.empty:
+                df = ak.fund_portfolio_industry_allocation_em(symbol=code, date=datetime.now().year - 1)
+            
+            if not df.empty:
+                 # Columns: 截止时间, 行业类别, 市值, 占净值比例...
+                 df['占净值比例'] = pd.to_numeric(df['占净值比例'], errors='coerce')
+                 top = df.sort_values('占净值比例', ascending=False).iloc[0]
+                 return str(top['行业类别'])
+        except: pass
+        return ""
+
+    @staticmethod
     def fetch_stock_quotes_sync(codes: List[str]) -> Dict[str, Dict[str, float]]:
         if not codes: return {}
         unique = list(set(codes))
@@ -186,10 +211,15 @@ class AkshareService:
             batch = unique[i:i+batch_size]
             secids = []
             for c in batch:
-                if c.startswith('6'): secids.append(f"1.{c}")
-                elif c.startswith('0') or c.startswith('3'): secids.append(f"0.{c}")
-                elif c.startswith('4') or c.startswith('8'): secids.append(f"0.{c}")
-                else: secids.append(f"0.{c}")
+                if len(c) == 6:
+                    if c.startswith('6'): secids.append(f"1.{c}")
+                    elif c.startswith('0') or c.startswith('3'): secids.append(f"0.{c}")
+                    elif c.startswith('4') or c.startswith('8'): secids.append(f"0.{c}")
+                    else: secids.append(f"0.{c}") # Fallback
+                elif len(c) == 5: # HK
+                     secids.append(f"116.{c}") # Eastmoney HK
+                else:
+                    secids.append(f"0.{c}")
             
             # f2: price, f3: change%
             url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f2,f3,f12&secids={','.join(secids)}"
@@ -202,23 +232,16 @@ class AkshareService:
                             "price": float(item['f2']) if item['f2'] != '-' else 0.0,
                             "change": float(item['f3']) if item['f3'] != '-' else 0.0
                         }
-            except: pass
+            except Exception as e: 
+                logger.error(f"Quote fetch error: {e}")
         return quotes
 
     @staticmethod
     def fetch_fund_list_sync():
         try:
             df = ak.fund_name_em()
-            # Rename columns to standard keys
-            df = df.rename(columns={
-                '基金代码': 'code',
-                '基金简称': 'name',
-                '基金类型': 'type',
-                '拼音缩写': 'pinyin'
-            })
-            # Select relevant columns and convert to list of dicts directly (much faster than iterrows)
+            df = df.rename(columns={'基金代码': 'code', '基金简称': 'name', '基金类型': 'type', '拼音缩写': 'pinyin'})
             result = df[['code', 'name', 'type', 'pinyin']].to_dict('records')
-            # Ensure all values are strings to prevent JSON serialization issues
             for r in result:
                 r['code'] = str(r['code'])
                 r['name'] = str(r['name'])
@@ -237,7 +260,6 @@ class FundController:
     async def get_search_results(key: str):
         cached = await cache_service.get_funds_list()
         if not cached:
-            # Expensive call, must run in threadpool
             cached = await run_in_threadpool(AkshareService.fetch_fund_list_sync)
             cache_service.set_funds_list(cached)
         
@@ -253,11 +275,12 @@ class FundController:
 
     @staticmethod
     async def get_fund_detail(code: str):
-        # Parallel fetch for manager (lightweight) and holdings (heavy)
+        # 1. Base Info
         manager_task = run_in_threadpool(ak.fund_manager_em, symbol=code)
         
+        # 2. Holdings
         cached_holdings = cache_service.get_holdings(code)
-        if cached_holdings:
+        if cached_holdings is not None:
             holdings = cached_holdings
         else:
             holdings = await run_in_threadpool(AkshareService.fetch_holdings_sync, code)
@@ -269,7 +292,30 @@ class FundController:
             if not m_df.empty: manager_name = m_df.iloc[-1]['姓名']
         except: pass
 
-        # Fetch Quotes for holdings
+        # 3. Smart Tagging (Industry)
+        industry_tag = cache_service.get_industry(code)
+        if not industry_tag:
+            # Try Akshare Industry Allocation first
+            industry_tag = await run_in_threadpool(AkshareService.fetch_industry_sync, code)
+            
+            # If Akshare fails and we have holdings, use Gemini to infer
+            if not industry_tag and holdings and GEMINI_API_KEY:
+                try:
+                    stocks = ", ".join([h['name'] for h in holdings[:5]])
+                    model = genai.GenerativeModel("gemini-3-flash-preview")
+                    prompt = f"Based on these fund holdings: {stocks}. What is the single specific industry sector name for this fund (e.g., 'Liquor', 'Semiconductor', 'Medical', 'New Energy')? Answer in Chinese, max 4 characters."
+                    resp = await run_in_threadpool(model.generate_content, prompt)
+                    if resp.text:
+                        industry_tag = resp.text.strip()
+                except Exception as e:
+                    logger.warning(f"Gemini tag inference failed: {e}")
+
+            if not industry_tag:
+                 industry_tag = "混合型" # Fallback
+
+            cache_service.set_industry(code, industry_tag)
+
+        # 4. Fetch Quotes for holdings (for detail view)
         if holdings:
             quotes = await run_in_threadpool(AkshareService.fetch_stock_quotes_sync, [h['code'] for h in holdings])
             for h in holdings: 
@@ -281,7 +327,12 @@ class FundController:
                     h['changePercent'] = 0
                     h['currentPrice'] = 0
 
-        return {"code": code, "manager": manager_name, "holdings": holdings}
+        return {
+            "code": code, 
+            "manager": manager_name, 
+            "holdings": holdings,
+            "industry": industry_tag 
+        }
 
     @staticmethod
     async def batch_estimate(codes: List[str]):
@@ -290,9 +341,7 @@ class FundController:
         loop = asyncio.get_running_loop()
         
         async def fetch_one(c):
-            # Parallel IO bound requests
             official = await loop.run_in_executor(None, AkshareService.fetch_realtime_estimate_sync, c)
-            # Parallel CPU/IO bound dataframe ops
             history = await loop.run_in_executor(None, AkshareService.fetch_fund_history_sync, c)
             return c, official, history
 
@@ -317,65 +366,32 @@ class FundController:
             
             res['_last_nav'] = last_nav
             
-            # Identify ETF Feeder or QDII Funds
             name = res.get('name', '').upper()
             is_etf_feeder = "ETF" in name or "联接" in name or "QDII" in name or "LOF" in name
             
-            # Logic to determine if calculation is needed
             need_calc = False
             
-            if phase in ['PRE_MARKET', 'WEEKEND']:
-                res['gsz'] = res['dwjz']
-                if len(history) >= 2:
-                    prev = float(history.iloc[-2]['单位净值'])
-                    if prev > 0: res['gszzl'] = "{:.4f}".format(((last_nav - prev)/prev)*100)
-                else: res['gszzl'] = "0.00"
-                res['source'] = 'real_history'
-            elif phase == 'POST_MARKET':
-                # Check if official data is updated to today
-                if res.get('jzrq') == today_str:
-                    curr = float(res.get('dwjz', 0))
-                    prev = 0
-                    if not history.empty:
-                        if str(history.iloc[-1]['净值日期']) == today_str:
-                            if len(history) >= 2: prev = float(history.iloc[-2]['单位净值'])
-                        else:
-                            prev = float(history.iloc[-1]['单位净值'])
-                    if prev > 0:
-                        res['gsz'] = str(curr)
-                        res['gszzl'] = "{:.4f}".format(((curr - prev)/prev)*100)
-                        res['source'] = "real_updated"
-                else:
-                    # If ETF/QDII, rely on official estimate even if post-market but not updated nav yet, 
-                    # because holdings penetration is inaccurate for these.
-                    if not is_etf_feeder:
-                        need_calc = True
-            else:
-                 # During market
-                 off_gsz = float(res.get("gsz", 0))
-                 # If official estimate is stale (equal to last nav or 0)
-                 # AND it is NOT an ETF/QDII (ETFs usually rely on official estimate tracking underlying)
-                 if (off_gsz <= 0 or abs(off_gsz - last_nav) < 0.0001):
+            # Logic: If official estimate (gszzl) is 0.00 during trading/lunch, it's likely stuck.
+            # We force calculation in this case to provide value.
+            # Exception: ETF Feeders usually rely on official/market price, holdings penetration is weak.
+            
+            off_gsz = float(res.get("gsz", 0))
+            off_gszzl = float(res.get("gszzl", 0))
+            
+            if phase in ['MARKET', 'LUNCH_BREAK']:
+                 # If official estimate is effectively zero change (and likely stuck), OR invalid
+                 if (abs(off_gszzl) < 0.001 and abs(off_gsz - last_nav) < 0.001) or off_gsz <= 0:
                      if not is_etf_feeder:
-                        need_calc = True
-                     else:
-                        # Even for ETFs, if official is dead, we might just return 0 change rather than wrong calc
-                        pass
-                 elif not is_etf_feeder:
-                     # If it's a standard fund, we might trust our penetration more if configured,
-                     # but for now, if official exists, use it unless we want to force penetration.
-                     # Let's force penetration for standard equity funds to be "Real-Time"
-                     need_calc = True
-
-            # Optimization: If it is an ETF feeder/QDII, do NOT calculate.
-            # Official estimate for these is usually derived from the underlying ETF/Index.
-            if is_etf_feeder:
-                need_calc = False
+                         need_calc = True
+            
+            # Override for post-market if not updated
+            if phase == 'POST_MARKET' and res.get('jzrq') != today_str and not is_etf_feeder:
+                need_calc = True
 
             if need_calc: calc_needed.append(code)
             results_map[code] = res
 
-        # Perform Calculation for needed funds (Standard Equity Funds)
+        # Perform Calculation
         if calc_needed:
             # 1. Ensure holdings
             codes_for_holding_fetch = []
@@ -416,24 +432,11 @@ class FundController:
                 
                 est_change = 0
                 if total_weight > 0:
-                    # Optimized Logic: 
-                    # If total weight of top 10 is low (e.g. < 40%), it might be a mixed bond fund.
-                    # If we only use stocks to estimate, we exaggerate volatility.
-                    # We normalize, but apply a damping factor based on weight.
-                    
                     normalized_change = weighted_change / total_weight
-                    
-                    # Damping factor: If top 10 is 50%, we assume the rest moves less (cash/bonds/diversified).
-                    # If it's an equity fund (often > 80% stock), weight is usually 40-60% in top 10.
-                    # We use a conservative estimator.
-                    
-                    # Simply using normalized average of top 10 assumes the other stocks move similarly.
-                    # Let's stick to normalized average but cap extreme outliers if needed.
-                    est_change = normalized_change
-                    
-                    # Slightly dampen to account for cash drag (usually 5% cash)
-                    est_change = est_change * 0.95
+                    est_change = normalized_change * 0.95 # Dampening
                 
+                # Only update if we actually calculated something non-zero, or if we want to show 0
+                # But to avoid replacing a valid 0 with a calc 0, we trust the calc if official was stuck.
                 est_nav = data['_last_nav'] * (1 + est_change / 100.0)
                 data['gsz'] = "{:.4f}".format(est_nav)
                 data['gszzl'] = "{:.4f}".format(est_change)
@@ -447,7 +450,6 @@ class FundController:
             raise HTTPException(status_code=500, detail="Server Gemini Key not configured")
         
         try:
-            # Use preview model for better performance/compliance
             model = genai.GenerativeModel("gemini-3-flash-preview") 
             response = await run_in_threadpool(model.generate_content, prompt)
             return {"text": response.text}
@@ -481,15 +483,16 @@ async def search(key: str = Query(..., min_length=1)):
 async def market(codes: str = Query(None)):
     target_codes = codes.split(',') if codes else ["1.000001", "0.399001"]
     
-    # FIX: Check if code is already formatted (contains dot) to prevent double prefixing
+    # Check if code is secid formatted (has dot)
     def format_secid(c):
         if '.' in c: return c 
+        # Heuristic for generic codes if passed without prefix
         if c.startswith('6') or c.startswith('1') or c.startswith('5'): return f"1.{c}"
+        if c.startswith('0') or c.startswith('3') or c.startswith('4') or c.startswith('8'): return f"0.{c}"
         return f"0.{c}"
 
     secids = [format_secid(c) for c in target_codes] 
     
-    # Added f2 (latest price)
     url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f3,f12,f14,f2&secids={','.join(secids)}"
     try:
         resp = await run_in_threadpool(lambda: requests.get(url, headers=AkshareService.get_headers(), timeout=3))
@@ -497,13 +500,17 @@ async def market(codes: str = Query(None)):
         result = []
         if data and 'data' in data and 'diff' in data['data']:
             for item in data['data']['diff']:
-                change = float(item['f3']) if item['f3'] else 0.0
+                change = float(item['f3']) if item['f3'] != '-' else 0.0
                 price = float(item['f2']) if item['f2'] != '-' else 0.0
                 score = max(0, min(100, 50 + change * 10))
+                # f12 code, f14 name
                 result.append({
-                    "name": item['f14'], "code": item['f12'], 
-                    "changePercent": change, "score": int(score), 
-                    "leadingStock": "--", "value": price
+                    "name": item['f14'], 
+                    "code": str(item['f12']), 
+                    "changePercent": change, 
+                    "score": int(score), 
+                    "leadingStock": "--", 
+                    "value": price
                 })
         return result
     except: return []
@@ -537,6 +544,5 @@ async def analyze(payload: dict = Body(...)):
 app.include_router(router)
 
 if __name__ == "__main__":
-    # Modified to support Zeabur PORT environment variable
     port = int(os.environ.get("PORT", 7860))
     uvicorn.run(app, host="0.0.0.0", port=port)

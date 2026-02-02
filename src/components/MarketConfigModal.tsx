@@ -9,23 +9,24 @@ interface MarketConfigModalProps {
 }
 
 // 预置的热门板块/指数代码 (Mapping to Eastmoney secids)
-// 这里为了简化，我们列出常用的，并假设后端可以处理
+// 修正：确保使用正确的 Eastmoney 代码格式
 const PRESETS = [
     { name: '上证指数', code: '1.000001', category: '大盘' },
     { name: '深证成指', code: '0.399001', category: '大盘' },
     { name: '创业板指', code: '0.399006', category: '大盘' },
     { name: '科创50', code: '1.000688', category: '大盘' },
-    { name: '恒生指数', code: '100.HSI', category: '港美' }, // 需后端支持，这里暂留位
-    { name: '纳斯达克', code: '100.NDX', category: '港美' },
+    { name: '北证50', code: '0.899050', category: '大盘' },
     { name: '中证白酒', code: '0.399997', category: '行业' },
     { name: '新能源车', code: '0.399976', category: '行业' },
-    { name: '半导体', code: '0.991023', category: '行业' }, // 中证半导体
-    { name: '光伏产业', code: '0.931151', category: '行业' },
+    { name: '半导体', code: '90.BK0917', category: '行业' }, // 行业板块通常用 90.BKxxxx
+    { name: '光伏设备', code: '90.BK1031', category: '行业' },
     { name: '中证医药', code: '0.000933', category: '行业' },
     { name: '中证军工', code: '0.399967', category: '行业' },
     { name: '证券公司', code: '0.399975', category: '行业' },
     { name: '中证银行', code: '0.399986', category: '行业' },
-    { name: '人工智能', code: '0.931071', category: '行业' },
+    { name: '人工智能', code: '90.BK0800', category: '行业' },
+    { name: '恒生指数', code: '100.HSI', category: '港美' },
+    { name: '纳斯达克', code: '100.NDX', category: '港美' },
 ];
 
 export const MarketConfigModal: React.FC<MarketConfigModalProps> = ({ isOpen, onClose, currentCodes, onSave }) => {
@@ -51,7 +52,7 @@ export const MarketConfigModal: React.FC<MarketConfigModalProps> = ({ isOpen, on
     if (!isOpen) return null;
 
     // Group by category
-    const categories = ['大盘', '行业', '港美']; // 港美可能需要后端适配，暂且放着
+    const categories = ['大盘', '行业', '港美'];
 
     return (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
@@ -88,7 +89,7 @@ export const MarketConfigModal: React.FC<MarketConfigModalProps> = ({ isOpen, on
                         </div>
                     ))}
                     <div className="text-xs text-slate-400 mt-2 bg-yellow-50 dark:bg-yellow-900/20 p-2 rounded text-center">
-                        提示：部分港美股指数数据可能延迟
+                        提示：部分港美股指数数据可能存在 15 分钟延迟
                     </div>
                 </div>
 
