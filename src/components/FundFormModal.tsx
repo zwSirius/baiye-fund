@@ -106,7 +106,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
         }
 
         // Use tags from detailedFund (which contains the smart industry tag)
-        const smartTags = detailedFund.tags && detailedFund.tags.length > 0 ? detailedFund.tags : fund.tags;
+        const smartTags = detailedFund.tags && detailedFund.tags.length > 0 && detailedFund.tags[0] !== "" ? detailedFund.tags : fund.tags;
 
         const fundBase = {
             ...fund,
