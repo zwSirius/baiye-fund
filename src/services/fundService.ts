@@ -2,8 +2,6 @@ import { Fund, SectorIndex, BacktestResult, BacktestPoint } from '../types';
 import { calculateFundMetrics } from '../utils/finance';
 
 // --- 配置后端地址 ---
-// 1. 生产环境 (Zeabur): 请在 Zeabur 环境变量中设置 VITE_API_BASE 为后端服务的完整 URL
-// 2. 本地开发 (Dev): 默认为空字符串，请求会通过 Vite 代理转发到 http://127.0.0.1:7860
 export const API_BASE = import.meta.env.VITE_API_BASE || '';
 
 // --- Local Storage Keys ---
@@ -45,7 +43,8 @@ export const getStoredMarketCodes = (): string[] => {
     if (stored) {
         return JSON.parse(stored);
     }
-    return ["1.000001", "0.399001", "0.399006", "0.399997", "0.399976"];
+    // 默认指数: 上证, 深证, 创业板, 科创50, 沪深300
+    return ["1.000001", "0.399001", "0.399006", "1.000688", "0.000300"];
 };
 
 export const saveMarketCodes = (codes: string[]) => {
@@ -190,8 +189,13 @@ export const getFundHistoryData = async (fundCode: string) => {
 // 5. 获取市场指数
 export const fetchMarketIndices = async (codes?: string[]): Promise<SectorIndex[]> => {
     try {
-        // 后端接口 /api/market 返回主要指数，目前暂时忽略 codes 参数，由后端固定返回重要指数
-        const response = await fetch(`${API_BASE}/api/market`);
+        // 构造 Query String
+        let url = `${API_BASE}/api/market`;
+        if (codes && codes.length > 0) {
+            url += `?codes=${codes.join(',')}`;
+        }
+
+        const response = await fetch(url);
         if (!response.ok) throw new Error("Market fetch failed");
         const data = await response.json();
         return data;
@@ -231,28 +235,31 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
         let source = fund.source;
 
         // 后端返回字段: dwjz(昨日净值), gsz(估算净值), gszzl(估算涨跌幅), jzrq(净值日期)
+        // 确保数值安全解析
         const apiDwjz = parseFloat(realData.dwjz);
         const apiGsz = parseFloat(realData.gsz);
         const apiGszZl = parseFloat(realData.gszzl);
 
-        // 1. 更新昨日净值
+        // 1. 更新昨日净值 (如果有有效数据)
         if (!isNaN(apiDwjz) && apiDwjz > 0) {
             lastNav = apiDwjz;
-            lastNavDate = realData.jzrq;
+            if (realData.jzrq) lastNavDate = realData.jzrq;
         } else if (lastNav === 0 && !isNaN(apiGsz)) {
-            // 如果初始为0，暂用估值填充
+            // 如果本地初始为0且API没给昨日净值，暂用估值填充作为基准
             lastNav = apiGsz;
         }
 
         // 2. 更新估算值
         if (!isNaN(apiGsz) && apiGsz > 0) {
             estimatedNav = apiGsz;
-            estimatedChangePercent = apiGszZl;
+            // 如果后端计算失败，gszzl可能为0，但如果有gsz，我们信赖gsz
+            estimatedChangePercent = isNaN(apiGszZl) ? 0 : apiGszZl;
             source = realData.source;
         } else if (!isNaN(apiDwjz) && apiDwjz > 0) {
-            // 兜底：如果没有估算值，使用净值
+            // 兜底：如果没有估算值，使用昨日净值，涨跌为0
             estimatedNav = apiDwjz;
             estimatedChangePercent = 0;
+            source = "fallback_nav";
         }
 
         if (realData.name && realData.name.length > 0) {
@@ -286,7 +293,7 @@ export const getNavByDate = async (fundCode: string, dateStr: string): Promise<n
         const exactMatch = history.find((h: any) => h.date === dateStr);
         if (exactMatch) return exactMatch.value;
 
-        // 如果找不到精确日期，找最近的一天
+        // 如果找不到精确日期，找最近的一天 (T-1)
         const targetDate = new Date(dateStr).getTime();
         // 倒序排列
         const sortedHistory = [...history].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -297,7 +304,7 @@ export const getNavByDate = async (fundCode: string, dateStr: string): Promise<n
             }
         }
         
-        // 兜底
+        // 兜底：用当前净值
         const realData = await fetchRealTimeEstimate(fundCode);
         if (realData && realData.dwjz && parseFloat(realData.dwjz) > 0) {
             return parseFloat(realData.dwjz);
