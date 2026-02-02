@@ -100,7 +100,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
     }).sort((a, b) => b.marketValue - a.marketValue);
   }, [funds, groups]);
 
-  // Use the passed in funds to calculate total return for display, instead of all funds globally
   const displayTotalReturn = useMemo(() => {
       let ret = 0;
       funds.forEach(f => {
@@ -182,7 +181,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       </div>
 
       {/* Compact Asset Card */}
-      <div className="mx-4 relative overflow-hidden rounded-xl shadow-lg transition-all duration-300 group ring-1 ring-white/10">
+      <div className="mx-4 relative overflow-hidden rounded-xl shadow-lg transition-all duration-300 group ring-1 ring-white/10 pb-8">
         <div className={`absolute inset-0 ${
              isSummary 
              ? 'bg-gradient-to-br from-indigo-500 via-purple-600 to-indigo-900' 
@@ -231,8 +230,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </div>
             </div>
             
-             <div className="absolute bottom-4 right-4 text-[9px] text-white/20 font-medium">
-                 {lastUpdate.toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'})}
+             <div className="absolute bottom-2 right-4 text-[9px] text-white/30 font-medium">
+                 更新于: {lastUpdate.toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'})}
             </div>
         </div>
       </div>
@@ -304,6 +303,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     className="bg-white dark:bg-slate-900/80 rounded-xl p-3 shadow-sm border border-slate-100 dark:border-slate-800 hover:shadow-md transition-all cursor-pointer active:scale-[0.98] relative overflow-hidden backdrop-blur-sm group"
                 >
                     {/* Source Indicator */}
+                    {fund.source && fund.source.includes('official') && (
+                        <div className="absolute top-0 right-0">
+                             <div className="bg-green-500/10 text-green-600 dark:text-green-400 text-[8px] px-1.5 py-0.5 rounded-bl-lg font-bold flex items-center gap-0.5">
+                                <Zap size={8} fill="currentColor" /> 官
+                             </div>
+                        </div>
+                    )}
                     {fund.source === 'holdings_calc_batch' && (
                         <div className="absolute top-0 right-0">
                              <div className="bg-blue-500/10 text-blue-600 dark:text-blue-400 text-[8px] px-1.5 py-0.5 rounded-bl-lg font-bold flex items-center gap-0.5">

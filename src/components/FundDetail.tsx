@@ -342,7 +342,7 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
              </div>
           )}
 
-          {/* Holdings Breakdown (Redesigned) */}
+          {/* Holdings Breakdown (No borders) */}
           <div className="bg-white dark:bg-slate-900 p-0 shadow-sm border border-slate-100 dark:border-slate-800 mt-2 mx-4 rounded-xl overflow-hidden">
                  <div className="flex items-center justify-between p-4 border-b border-slate-50 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50">
                      <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 text-sm">
@@ -357,7 +357,7 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                  {isLoadingDetails ? (
                     <div className="py-8 flex justify-center"><Loader2 className="animate-spin text-slate-300"/></div>
                  ) : (
-                    <div className="divide-y divide-slate-50 dark:divide-slate-800">
+                    <div>
                         {/* Column Headers */}
                         <div className="flex px-4 py-2 bg-slate-50 dark:bg-slate-900 text-[10px] font-bold text-slate-400 uppercase tracking-wide">
                             <div className="w-[45%]">股票</div>

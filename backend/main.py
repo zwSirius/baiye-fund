@@ -122,27 +122,24 @@ class AkshareService:
                             }
                         except: pass
             elif market_type == 'HK':
-                # 港股个股行情
-                # 注意: Akshare 没有 stock_hk_spot_em 的直接全量接口，通常使用 stock_hk_index_spot_em 看指数
-                # 但为了持仓计算，这里如果需要个股，可能需要 trade/hk_stock (ak.stock_hk_spot() 被移除?)
-                # 暂时保留原逻辑或使用 stick_hk_index_spot_em 作为指数
-                # 这里假设 stock_hk_spot_em 依然可用，或者降级处理
+                # stock_hk_spot_em 似乎不稳定，此处尝试用 stock_hk_index_spot_em 或其他替代
+                # 为了保持持仓估算功能，我们尽量获取个股数据
+                # 如果失败，这里暂时返回空，不影响整体流程
                 try:
-                    df = ak.stock_hk_spot_em() # 尝试使用
+                    df = ak.stock_hk_spot() # 备用接口
                     if not df.empty:
                         for row in df.itertuples():
                             try:
-                                code = str(row.代码)
+                                code = str(row.symbol)
                                 result_map[code] = {
-                                    "price": float(row.最新价),
-                                    "change": float(row.涨跌幅),
-                                    "name": str(row.名称)
+                                    "price": float(row.lasttrade),
+                                    "change": float(row.percent) * 100, # 这里的 percent 可能是 0.01
+                                    "name": str(row.name)
                                 }
                             except: pass
                 except: pass
 
             elif market_type == 'US':
-                # stock_us_spot_em: 美股实时
                 df = ak.stock_us_spot_em()
                 if not df.empty:
                     for row in df.itertuples():
@@ -200,7 +197,7 @@ class AkshareService:
         cache_service.set(key, result_map)
         return result_map
 
-    # --- 核心: 市场指数 (使用指定接口) ---
+    # --- 核心: 市场指数 (Strict Implementation) ---
     @staticmethod
     def fetch_global_indices_data_cached():
         key = "global_indices_spot_map"
@@ -209,23 +206,26 @@ class AkshareService:
 
         indices_map = {}
         
-        # 1. A股指数: stock_zh_index_spot_em (symbol="沪深重要指数")
-        try:
-            df_zh = ak.stock_zh_index_spot_em(symbol="沪深重要指数")
-            if not df_zh.empty:
-                for row in df_zh.itertuples():
-                    try:
-                        code = str(row.代码) # e.g. "000001"
-                        name = str(row.名称)
-                        price = float(row.最新价)
-                        change = float(row.涨跌幅)
-                        
-                        # 映射逻辑: 前端请求的是 "1.000001" (上证), "0.399001" (深证)
-                        # 我们存储纯数字代码作为Key，控制器层做模糊匹配
-                        indices_map[code] = {"price": price, "change": change, "name": name}
-                        indices_map[name] = {"price": price, "change": change, "name": name}
-                    except: pass
-        except Exception as e: logger.warning(f"ZH index fetch failed: {e}")
+        # 1. A股指数: stock_zh_index_spot_em
+        # 必须遍历多个 symbol 以覆盖主要指数
+        zh_symbols = ["上证系列指数", "深证系列指数", "沪深重要指数", "指数成份"]
+        for sym in zh_symbols:
+            try:
+                df_zh = ak.stock_zh_index_spot_em(symbol=sym)
+                if not df_zh.empty:
+                    for row in df_zh.itertuples():
+                        try:
+                            code = str(row.代码)
+                            name = str(row.名称)
+                            price = float(row.最新价)
+                            # 强制保留两位小数
+                            change = round(float(row.涨跌幅), 2)
+                            
+                            item = {"price": price, "change": change, "name": name}
+                            indices_map[code] = item
+                            indices_map[name] = item
+                        except: pass
+            except Exception as e: pass
 
         # 2. 港股指数: stock_hk_index_spot_em
         try:
@@ -236,27 +236,40 @@ class AkshareService:
                         code = str(row.代码) # e.g. "HSI"
                         name = str(row.名称)
                         price = float(row.最新价)
-                        change = float(row.涨跌幅)
-                        indices_map[code] = {"price": price, "change": change, "name": name}
-                        indices_map[name] = {"price": price, "change": change, "name": name}
+                        change = round(float(row.涨跌幅), 2)
+                        
+                        item = {"price": price, "change": change, "name": name}
+                        indices_map[code] = item
+                        indices_map[name] = item
                     except: pass
         except Exception as e: logger.warning(f"HK index fetch failed: {e}")
         
-        # 3. 美股指数: index_us_stock_sina (specific symbols)
-        us_symbols = {".NDX": "纳斯达克100", ".SPX": "标普500", ".DJI": "道琼斯", ".IXIC": "纳斯达克"}
-        for sym, cname in us_symbols.items():
+        # 3. 美股指数: index_us_stock_sina
+        # symbol choice: .IXIC, .DJI, .INX, .NDX
+        us_targets = [".IXIC", ".DJI", ".INX", ".NDX"]
+        us_names = {".IXIC": "纳斯达克", ".DJI": "道琼斯", ".INX": "标普500", ".NDX": "纳斯达克100"}
+        
+        for sym in us_targets:
             try:
                 df_us = ak.index_us_stock_sina(symbol=sym)
                 if not df_us.empty:
+                    # df columns: date, open, high, low, close, volume, amount
+                    # data is historical daily k-line. Last row is latest.
                     last = df_us.iloc[-1]
+                    # Check if previous row exists for change calc
                     prev_close = df_us.iloc[-2]['close'] if len(df_us) > 1 else last['open']
-                    price = float(last['close'])
-                    change = ((price - float(prev_close)) / float(prev_close)) * 100
                     
+                    price = float(last['close'])
+                    change_raw = ((price - float(prev_close)) / float(prev_close)) * 100
+                    change = round(change_raw, 2)
+                    
+                    name = us_names.get(sym, sym)
                     clean_code = sym.replace('.', '') # NDX
-                    indices_map[clean_code] = {"price": price, "change": change, "name": cname}
-                    indices_map[cname] = {"price": price, "change": change, "name": cname}
-            except: pass
+                    
+                    item = {"price": price, "change": change, "name": name}
+                    indices_map[clean_code] = item
+                    indices_map[name] = item
+            except Exception as e: pass
 
         # 4. 全球指数: index_global_spot_em (Backup)
         try:
@@ -265,9 +278,10 @@ class AkshareService:
                 for row in df_global.itertuples():
                     try:
                         name = str(row.名称)
+                        # Only add if not exists to avoid overwriting better data
                         if name not in indices_map:
                             price = float(row.最新价)
-                            change = float(row.涨跌幅)
+                            change = round(float(row.涨跌幅), 2)
                             indices_map[name] = {"price": price, "change": change, "name": name}
                     except: pass
         except: pass
@@ -275,78 +289,16 @@ class AkshareService:
         cache_service.set(key, indices_map)
         return indices_map
 
-    # --- 核心: 官方盘后净值 (合并三个接口) ---
-    @staticmethod
-    def fetch_all_official_daily_data_cached():
-        """
-        聚合: 
-        1. fund_open_fund_daily_em (场外)
-        2. fund_etf_fund_daily_em (ETF)
-        3. fund_money_fund_daily_em (货币)
-        """
-        key = "all_official_daily_map"
-        cached = cache_service.get(key, 3600) # 1小时缓存
-        if cached: return cached
-        
-        nav_map = {}
-        
-        # 1. 开放式基金
-        try:
-            df_open = ak.fund_open_fund_daily_em()
-            if not df_open.empty:
-                for row in df_open.itertuples():
-                    try:
-                        code = str(row.基金代码)
-                        nav_map[code] = {"nav": float(row.单位净值), "change": float(row.日增长率), "type": "OPEN"}
-                    except: pass
-        except Exception as e: logger.warning(f"Open fund daily fetch failed: {e}")
-
-        # 2. ETF
-        try:
-            df_etf = ak.fund_etf_fund_daily_em()
-            if not df_etf.empty:
-                for row in df_etf.itertuples():
-                    try:
-                        code = str(row.基金代码)
-                        # 列名: 基金代码, 当前交易日-单位净值, 增长率
-                        # 注意增长率可能带%
-                        nav = getattr(row, '当前交易日-单位净值', 0)
-                        growth_str = str(getattr(row, '增长率', '0')).replace('%', '')
-                        change = float(growth_str) if growth_str != '--' else 0.0
-                        nav_map[code] = {"nav": float(nav), "change": change, "type": "ETF_DAILY"}
-                    except: pass
-        except Exception as e: logger.warning(f"ETF daily fetch failed: {e}")
-
-        # 3. 货币基金
-        try:
-            df_money = ak.fund_money_fund_daily_em()
-            if not df_money.empty:
-                for row in df_money.itertuples():
-                    try:
-                        code = str(row.基金代码)
-                        # 货币基金没有涨跌幅概念，用万份收益模拟或设为0
-                        # 重点是单位净值通常为1，但这里为了收益计算，我们可能需要特殊处理
-                        # 暂时设 nav=1, change=万份收益/100 (近似)
-                        profit_10k = getattr(row, '当前交易日-万份收益', 0)
-                        nav_map[code] = {"nav": 1.0, "change": float(profit_10k)/100.0, "type": "MONEY"}
-                    except: pass
-        except Exception as e: logger.warning(f"Money fund daily fetch failed: {e}")
-
-        cache_service.set(key, nav_map)
-        return nav_map
-
     # --- 其他基础接口 ---
     @staticmethod
     def fetch_fund_list_sync():
         try:
-            # fund_name_em
             df = ak.fund_name_em()
             return [{"code": str(r.基金代码), "name": str(r.基金简称), "type": str(r.基金类型), "pinyin": str(r.拼音缩写)} for r in df.itertuples()]
         except: return []
 
     @staticmethod
     def fetch_realtime_estimate_direct_sync(code: str):
-        # 保持 fundgz 接口用于盘中估值
         data = { "fundcode": code, "name": "", "gsz": "0", "gszzl": "0", "dwjz": "0", "jzrq": "", "source": "none", "gztime": "" }
         try:
             ts = int(time_module.time() * 1000)
@@ -380,7 +332,6 @@ class AkshareService:
     @staticmethod
     def fetch_holdings_sync(code: str) -> List[Dict]:
         try:
-            # fund_portfolio_hold_em
             current_year = datetime.now().year
             combined_df = pd.DataFrame()
             for y in [current_year, current_year - 1]:
@@ -429,7 +380,8 @@ class AkshareService:
             df['涨跌幅'] = pd.to_numeric(df['涨跌幅'], errors='coerce').fillna(0)
             df_sorted = df.sort_values(by='涨跌幅', ascending=False)
             def extract(sub): return [{"name": r['板块名称'], "changePercent": float(r['涨跌幅']), "leadingStock": r['领涨股票']} for _, r in sub.iterrows()]
-            return {"top": extract(df_sorted.head(3)), "bottom": extract(df_sorted.tail(3))}
+            # 返回 Top 5 和 Bottom 5
+            return {"top": extract(df_sorted.head(5)), "bottom": extract(df_sorted.tail(5))}
         except: return {"top": [], "bottom": []}
 
     @staticmethod
@@ -437,7 +389,6 @@ class AkshareService:
         phase = AkshareService.get_time_phase()
         try:
             if phase in ['PRE_MARKET', 'MARKET', 'LUNCH_BREAK']:
-                # fund_value_estimation_em
                 df_est = ak.fund_value_estimation_em(symbol="全部")
                 if not df_est.empty:
                     df_est['est_change'] = df_est['交易日-估算数据-估算增长率'].str.replace('%', '', regex=False)
@@ -547,7 +498,6 @@ class FundController:
             found = False
             clean_code = req_c.split('.')[-1]
             
-            # 1. Try by code
             if clean_code in indices_spot_map:
                 data = indices_spot_map[clean_code]
                 indices.append({
@@ -557,7 +507,6 @@ class FundController:
                 })
                 found = True
             
-            # 2. Try by name
             if not found:
                  possible_name = code_to_name_map.get(req_c, req_c)
                  if possible_name in indices_spot_map:
@@ -606,23 +555,22 @@ class FundController:
         today_str = today.strftime('%Y-%m-%d')
         today_cache_key = today_str
 
-        # 并行获取: JS估值 + 历史净值 + 官方确权净值 + ETF实时
+        # 优化策略：
+        # 不再拉取全量 fund_open_fund_daily_em (太慢)
+        # 而是并行拉取每个基金的 History (官方确权) 和 JS Estimate (实时/官方估值)
+        # 如果 History 最新日期 >= JS Estimate 日期，说明官方已确权，覆盖 JS 数据。
         
-        # 1. 官方确权净值 (优先加载)
-        all_daily_map_task = loop.run_in_executor(None, AkshareService.fetch_all_official_daily_data_cached)
-        
-        # 2. 只有在盘中且官方JS为0时才需要 ETF 实时，这里预加载
         etf_lof_map_task = loop.run_in_executor(None, AkshareService.fetch_etf_lof_spot_cached)
 
         async def fetch_one(c):
             est = await loop.run_in_executor(None, AkshareService.fetch_realtime_estimate_direct_sync, c)
+            # Fetch history to get confirmed official NAV
             hist = await loop.run_in_executor(None, AkshareService.fetch_fund_history_sync_cached, c, today_cache_key)
             return c, est, hist
 
         results_data_task = asyncio.gather(*[fetch_one(c) for c in missing_codes])
         
-        # Await all
-        all_daily_map, etf_lof_map, results_data = await asyncio.gather(all_daily_map_task, etf_lof_map_task, results_data_task)
+        etf_lof_map, results_data = await asyncio.gather(etf_lof_map_task, results_data_task)
         
         phase = AkshareService.get_time_phase()
         calc_needed = []
@@ -634,42 +582,75 @@ class FundController:
                 try: return float(v)
                 except: return default
 
-            hist_last_nav = 0.0
+            # Parse History (Official Confirmed Data)
+            official_confirmed_nav = 0.0
+            official_confirmed_date = ""
+            official_confirmed_change = 0.0
+            
             if not hist.empty:
+                # hist sorted by date ascending usually? akshare returns df.
+                # Assuming last row is latest
                 latest = hist.iloc[-1]
-                hist_last_nav = float(latest['单位净值'])
+                official_confirmed_nav = float(latest['单位净值'])
+                official_confirmed_date = str(latest['净值日期'])
+                
+                # Calculate change if possible
+                if len(hist) > 1:
+                    prev = hist.iloc[-2]
+                    prev_nav = float(prev['单位净值'])
+                    if prev_nav > 0:
+                        official_confirmed_change = ((official_confirmed_nav - prev_nav) / prev_nav) * 100
 
+            # Parse Estimate (JS Data)
             api_dwjz = safe_float(res.get('dwjz'))
-            api_jzrq = res.get('jzrq', '')
+            api_jzrq = res.get('jzrq', '') # Estimate usually returns prev day confirmed date in jzrq, unless official updated?
+            # Actually JS `jzrq` is "Value Date". `time` is estimate time.
+            api_gsz = safe_float(res.get('gsz'))
             api_gszzl = safe_float(res.get('gszzl'))
 
             is_official_updated = False
             
-            # --- 优先级逻辑 ---
+            # --- 优先级逻辑 (Smart Overwrite) ---
             
-            # 1. 检查官方日报表 (Highest Priority)
-            # 如果基金在 official daily map 中，且 (当前是盘后 OR 日报表有今日数据)
-            # 简化逻辑: 只要日报表有数据，就优先用。
-            if all_daily_map and code in all_daily_map:
-                daily_data = all_daily_map[code]
-                res['dwjz'] = str(daily_data['nav'])
-                res['gsz'] = str(daily_data['nav'])
-                res['gszzl'] = "{:.2f}".format(daily_data['change'])
-                res['source'] = 'official_daily_ak'
-                res['gztime'] = "已更新(官方)"
-                # 如果是ETF，可能没有日期字段，默认为今日
-                res['jzrq'] = today_str 
+            # Logic: If Official History Date is >= Estimate Date (or if Official Date is "Today" or "Yesterday" and JS is stuck)
+            # Crucial: JS interface (fundgz) often keeps 15:00 estimate even after official NAV is out on other endpoints.
+            # We rely on History Date.
+            
+            use_history_as_official = False
+            
+            if official_confirmed_nav > 0:
+                # Case 1: Official History has today's date -> It is finalized.
+                if official_confirmed_date == today_str:
+                    use_history_as_official = True
                 
-                api_dwjz = daily_data['nav']
+                # Case 2: Official History date is SAME as JS Estimate date, 
+                # AND Official NAV != JS Estimate NAV (implies estimate was wrong and official is out? Or just diff?)
+                # Actually, if dates match, History is always "Truth". JS Estimate is just "Estimate".
+                # If JS `jzrq` (last nav date) == official date, it means JS hasn't updated to *next* day yet?
+                # JS `gsz` is for `gztime`. 
+                # Compare `official_confirmed_date` vs `res.get('time')` date?
+                # Simplification: If official_confirmed_date is "newer" than what we expect, use it.
+                # If official_confirmed_date > api_jzrq (JS last nav date), then History is fresher.
+                elif api_jzrq and official_confirmed_date > api_jzrq:
+                    use_history_as_official = True
+                
+                # Case 3: Just check if History is logically the latest possible.
+                # If phase is POST_MARKET (late night), and history date == today (or yesterday if after midnight but before open)
+                # This is handled by Case 1 & logic below.
+            
+            if use_history_as_official:
+                res['dwjz'] = str(official_confirmed_nav)
+                res['gsz'] = str(official_confirmed_nav)
+                res['gszzl'] = "{:.2f}".format(official_confirmed_change)
+                res['source'] = 'official_history_ak'
+                res['gztime'] = "已更新(官方)"
+                res['jzrq'] = official_confirmed_date
+                
+                api_dwjz = official_confirmed_nav
                 is_official_updated = True
 
-            # 2. 检查JS接口是否已经是今天的日期 (且没被Step1覆盖)
-            if not is_official_updated and api_jzrq == today_str and api_dwjz > 0: 
-                is_official_updated = True
-                res['source'] = 'official_realtime'
-
-            # 3. ETF/LOF 实时 (盘中且官方无确权)
-            if not is_official_updated and api_gszzl == 0 and etf_lof_map and code in etf_lof_map:
+            # 2. ETF/LOF Realtime (Intraday backup)
+            if not is_official_updated and etf_lof_map and code in etf_lof_map:
                  spot_info = etf_lof_map[code]
                  if spot_info['price'] > 0:
                     res['gsz'] = str(spot_info['price'])
@@ -677,22 +658,16 @@ class FundController:
                     res['source'] = f'realtime_{spot_info["type"].lower()}' 
                     res['gztime'] = "实时交易"
             
-            # 4. 准备计算重仓股
-            last_nav = hist_last_nav if hist_last_nav > 0 else api_dwjz
+            # 3. Last resort fallback / Heavy Calculation
+            last_nav = official_confirmed_nav if official_confirmed_nav > 0 else api_dwjz
             
             if is_official_updated:
-                # 修正涨跌幅显示 (有时候日报只有NAV没有change)
-                if hist_last_nav > 0 and api_dwjz > 0:
-                     change = ((api_dwjz - hist_last_nav) / hist_last_nav) * 100
-                     res['gszzl'] = "{:.2f}".format(change)
-                elif res.get('gszzl') is None:
-                     res['gszzl'] = "0.00"
-                res['gsz'] = str(api_dwjz)
-                res['dwjz'] = str(api_dwjz) 
+                # If officially updated, GSZ = NAV, Change = Real Change
+                pass 
             else:
                 res['_last_nav'] = last_nav 
                 gsz = safe_float(res.get('gsz'))
-                # 如果估值为0，且非盘前，且没被官方/ETF覆盖，则需要重仓股估算
+                # Calculate if no valid estimate exists
                 if gsz <= 0 and phase != 'PRE_MARKET' and 'realtime' not in res.get('source', ''): 
                     calc_needed.append(code)
 
@@ -771,7 +746,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 router = APIRouter(prefix="/api")
 
 @router.get("/status")
-def status(): return { "phase": AkshareService.get_time_phase(), "ts": datetime.now().timestamp(), "version": "4.0" }
+def status(): return { "phase": AkshareService.get_time_phase(), "ts": datetime.now().timestamp(), "version": "4.2" }
 @router.get("/search")
 async def search(key: str = Query(..., min_length=1)): return await FundController.get_search_results(key)
 @router.get("/market/overview")

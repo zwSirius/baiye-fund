@@ -98,7 +98,7 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = ({ marketCodes, o
                             <span>领涨板块</span> <TrendingUp size={12}/>
                         </div>
                         <div className="space-y-2">
-                            {(isLoading && !data) ? [1,2,3].map(i => <Skeleton key={i} className="h-8 w-full"/>) : (
+                            {(isLoading && !data) ? [1,2,3,4,5].map(i => <Skeleton key={i} className="h-8 w-full"/>) : (
                                 data?.sectors.top.map((s, idx) => (
                                     <SectorRow key={s.name} rank={idx+1} name={s.name} change={s.changePercent} stock={s.leadingStock} type="up"/>
                                 ))
@@ -112,7 +112,7 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = ({ marketCodes, o
                             <span>领跌板块</span> <TrendingDown size={12}/>
                         </div>
                         <div className="space-y-2">
-                            {(isLoading && !data) ? [1,2,3].map(i => <Skeleton key={i} className="h-8 w-full"/>) : (
+                            {(isLoading && !data) ? [1,2,3,4,5].map(i => <Skeleton key={i} className="h-8 w-full"/>) : (
                                 data?.sectors.bottom.map((s, idx) => (
                                     <SectorRow key={s.name} rank={idx+1} name={s.name} change={s.changePercent} stock={s.leadingStock} type="down"/>
                                 ))
