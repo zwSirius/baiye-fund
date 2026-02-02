@@ -28,7 +28,7 @@ const SourceBadge = ({ source }: { source?: string }) => {
     if (!source) return null;
     
     // LV1: Official
-    if (source.includes('LV1')) {
+    if (source.includes('LV1') || source === 'official' || source === 'real_updated') {
          return <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold border border-transparent bg-green-50 text-green-600 dark:bg-green-900/30"><ShieldCheck size={10} /> 官方估值</span>;
     }
     // LV2: Proxy
@@ -36,7 +36,7 @@ const SourceBadge = ({ source }: { source?: string }) => {
          return <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold border border-transparent bg-indigo-50 text-indigo-500 dark:bg-indigo-900/30"><Zap size={10} /> 场内映射</span>;
     }
     // LV3: Holdings
-    if (source.includes('LV3')) {
+    if (source.includes('LV3') || source === 'holdings_calc_batch') {
          return <span className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold border border-transparent bg-blue-50 text-blue-500 dark:bg-blue-900/30"><Microscope size={10} /> 重仓穿透</span>;
     }
     // LV4: None
