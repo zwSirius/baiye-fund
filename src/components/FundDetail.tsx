@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Fund, Transaction } from '../types';
 import { getFundHistoryData, fetchFundDetails } from '../services/fundService';
-import { ChevronLeft, Edit2, Trash2, History, Loader2, Layers, Zap, Info, Tag, TrendingUp, TrendingDown, DollarSign, PieChart, Wallet } from 'lucide-react';
+import { ChevronLeft, Edit2, Trash2, History, Loader2, Layers, Info, Tag, TrendingUp, TrendingDown, Wallet, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 interface FundDetailProps {
@@ -101,7 +101,6 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
 
   const displayFund = detailedFund;
   
-  // Logic to determine if it's a portfolio fund or watchlist fund
   const isPortfolio = displayFund.holdingShares > 0;
 
   // Portfolio Calculations
@@ -110,7 +109,6 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
   const accumulatedProfit = (holdingMarketValue - totalCostValue) + (displayFund.realizedProfit || 0);
   const holdingProfitRatio = totalCostValue > 0 ? ((holdingMarketValue - totalCostValue) / totalCostValue) * 100 : 0;
   
-  // Contribution
   const topHoldingsContribution = displayFund.holdings.reduce((acc, h) => acc + (h.percent * h.changePercent / 100), 0);
 
   return (
@@ -145,21 +143,20 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
 
       <div className="flex-1 pb-24">
           
-          {/* Hero Card (Net Worth & Estimate) */}
+          {/* Hero Card */}
           <div className="p-4 pb-2">
               <div className={`rounded-2xl p-6 text-white shadow-xl relative overflow-hidden transition-colors ${
                   displayFund.estimatedChangePercent >= 0 
                   ? 'bg-gradient-to-br from-red-500 to-rose-600 shadow-red-500/20' 
                   : 'bg-gradient-to-br from-emerald-500 to-teal-600 shadow-emerald-500/20'
               }`}>
-                   {/* Noise Texture */}
                    <div className="absolute inset-0 opacity-10 mix-blend-overlay" style={{backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")`}}></div>
 
                    <div className="relative z-10 flex justify-between items-start">
                        <div>
                            <div className="flex items-center gap-2 mb-1 opacity-90">
-                               <span className="text-xs font-medium border border-white/20 px-2 py-0.5 rounded-full">
-                                    {displayFund.source === 'official_final' ? '已更新 · 真实净值' : (displayFund.source === 'holdings_calc_batch' ? '实时估算 · 重仓股' : '官方估算')}
+                               <span className="text-xs font-medium border border-white/20 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                    {displayFund.source && displayFund.source.includes('official') ? '✅ 官方公布' : (displayFund.source === 'holdings_calc_batch' ? '⚡ 重仓股估算' : '📊 官方估算')}
                                </span>
                                <span className="text-[10px]">{displayFund.estimateTime || displayFund.lastNavDate}</span>
                            </div>
@@ -174,7 +171,6 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                        </div>
                    </div>
 
-                    {/* Simple Stats for Watchlist Mode */}
                     {!isPortfolio && (
                         <div className="mt-4 flex gap-4 text-xs opacity-80">
                             <div>昨日净值: {displayFund.lastNav.toFixed(4)}</div>
@@ -184,7 +180,6 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
               </div>
           </div>
 
-          {/* Portfolio Specific Details (Only for held funds) */}
           {isPortfolio && (
               <div className="px-4 mb-4">
                   <div className="bg-white dark:bg-slate-900 rounded-xl p-4 shadow-sm border border-slate-100 dark:border-slate-800">
@@ -226,7 +221,6 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
               </div>
           )}
 
-          {/* Tabs */}
           <div className="px-4 mb-2">
               <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
                 <button 
@@ -348,14 +342,14 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
              </div>
           )}
 
-          {/* Holdings Breakdown */}
-          <div className="bg-white dark:bg-slate-900 p-5 mb-3 shadow-sm border border-slate-100 dark:border-slate-800 mt-2 mx-4 rounded-xl">
-                 <div className="flex items-center justify-between mb-4">
-                     <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-                        <Layers size={18} className="text-indigo-500" />
+          {/* Holdings Breakdown (Redesigned) */}
+          <div className="bg-white dark:bg-slate-900 p-0 shadow-sm border border-slate-100 dark:border-slate-800 mt-2 mx-4 rounded-xl overflow-hidden">
+                 <div className="flex items-center justify-between p-4 border-b border-slate-50 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50">
+                     <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 text-sm">
+                        <Layers size={16} className="text-indigo-500" />
                         十大重仓股 (实时)
                      </h3>
-                     <div className="text-[10px] text-slate-400 bg-slate-50 dark:bg-slate-800 px-2 py-1 rounded-lg">
+                     <div className="text-[10px] font-bold px-2 py-1 rounded-md bg-white dark:bg-slate-700 border border-slate-100 dark:border-slate-600 text-slate-500 dark:text-slate-300 shadow-sm">
                         Top10 贡献: <span className={topHoldingsContribution >= 0 ? 'text-up-red' : 'text-down-green'}>{topHoldingsContribution > 0 ? '+' : ''}{topHoldingsContribution.toFixed(2)}%</span>
                      </div>
                  </div>
@@ -363,55 +357,67 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                  {isLoadingDetails ? (
                     <div className="py-8 flex justify-center"><Loader2 className="animate-spin text-slate-300"/></div>
                  ) : (
-                    <div className="space-y-3">
+                    <div className="divide-y divide-slate-50 dark:divide-slate-800">
+                        {/* Column Headers */}
+                        <div className="flex px-4 py-2 bg-slate-50 dark:bg-slate-900 text-[10px] font-bold text-slate-400 uppercase tracking-wide">
+                            <div className="w-[45%]">股票</div>
+                            <div className="w-[25%] text-right">实时涨跌</div>
+                            <div className="w-[30%] text-right">持仓占比/贡献</div>
+                        </div>
+
                         {displayFund.holdings.length > 0 ? displayFund.holdings.map((stock, idx) => {
                             const contribution = (stock.percent * stock.changePercent) / 100;
                             return (
-                                <div key={stock.code} className="relative">
-                                    <div className="flex justify-between items-center text-sm z-10 relative py-1">
-                                        <div className="flex items-center gap-3 w-[40%]">
-                                            <span className={`text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-md ${idx < 3 ? 'bg-orange-100 text-orange-600 dark:bg-orange-900/30' : 'bg-slate-100 text-slate-400 dark:bg-slate-800'}`}>
-                                                {idx + 1}
-                                            </span>
-                                            <div className="min-w-0">
-                                                <div className="font-bold text-slate-700 dark:text-slate-200 leading-tight truncate">{stock.name}</div>
-                                                <div className="text-[10px] text-slate-400 font-mono">{stock.code}</div>
-                                            </div>
+                                <div key={stock.code} className="flex items-center px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
+                                    {/* Name & Code */}
+                                    <div className="w-[45%] flex items-center gap-3 min-w-0 pr-2">
+                                        <div className={`w-5 h-5 flex-shrink-0 flex items-center justify-center rounded-md text-[10px] font-bold ${
+                                            idx < 3 ? 'bg-orange-100 text-orange-600 dark:bg-orange-500/20' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                                        }`}>
+                                            {idx + 1}
                                         </div>
-
-                                        <div className="text-right w-[25%]">
-                                            <div className={`font-bold ${stock.changePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                                                {stock.changePercent > 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
-                                            </div>
-                                            <div className="text-[9px] text-slate-400">
-                                                ¥{stock.currentPrice > 0 ? stock.currentPrice.toFixed(2) : '--'}
-                                            </div>
-                                        </div>
-
-                                        <div className="text-right w-[35%] pl-2">
-                                            <div className="text-[10px] text-slate-400">持仓 {stock.percent}%</div>
-                                            <div className={`text-xs font-bold ${contribution >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                                                贡献 {contribution > 0 ? '+' : ''}{contribution.toFixed(2)}%
-                                            </div>
+                                        <div className="min-w-0">
+                                            <div className="font-bold text-sm text-slate-700 dark:text-slate-200 truncate">{stock.name}</div>
+                                            <div className="text-[10px] text-slate-400 font-mono">{stock.code}</div>
                                         </div>
                                     </div>
-                                    {/* Visual Bar Background */}
-                                    <div className="absolute bottom-0 left-0 h-0.5 bg-slate-100 dark:bg-slate-800 w-full rounded-full overflow-hidden mt-1">
-                                        <div 
-                                            className={`h-full ${contribution >= 0 ? 'bg-up-red' : 'bg-down-green'} opacity-40`} 
-                                            style={{width: `${Math.min(stock.percent * 3, 100)}%`}}
-                                        ></div>
+
+                                    {/* Price & Change */}
+                                    <div className="w-[25%] text-right">
+                                        <div className={`font-bold text-sm flex items-center justify-end gap-0.5 ${stock.changePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
+                                            {stock.changePercent >= 0 ? <ArrowUpRight size={12}/> : <ArrowDownRight size={12}/>}
+                                            {stock.changePercent > 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
+                                        </div>
+                                        <div className="text-[10px] text-slate-400 font-medium">
+                                            ¥{stock.currentPrice > 0 ? stock.currentPrice.toFixed(2) : '--'}
+                                        </div>
+                                    </div>
+
+                                    {/* Holdings & Contribution */}
+                                    <div className="w-[30%] text-right pl-2">
+                                        <div className="text-[10px] text-slate-500 dark:text-slate-400 font-medium mb-1">
+                                            {stock.percent}% <span className="text-slate-300 mx-1">|</span> 
+                                            <span className={`${contribution >= 0 ? 'text-up-red' : 'text-down-green'}`}>
+                                                {contribution > 0 ? '+' : ''}{contribution.toFixed(2)}%
+                                            </span>
+                                        </div>
+                                        {/* Visual Bar */}
+                                        <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden flex justify-end">
+                                            <div 
+                                                className={`h-full rounded-full ${contribution >= 0 ? 'bg-up-red' : 'bg-down-green'}`} 
+                                                style={{width: `${Math.min(Math.abs(stock.percent * 2), 100)}%`, opacity: 0.8}}
+                                            ></div>
+                                        </div>
                                     </div>
                                 </div>
                             )
                         }) : (
-                            <div className="text-center text-slate-400 text-xs py-4">暂无持仓数据或更新失败</div>
+                            <div className="text-center text-slate-400 text-xs py-8">暂无持仓数据</div>
                         )}
                     </div>
                  )}
           </div>
           
-          {/* Fund Manager Info - Moved to Bottom */}
           <div className="px-4 mb-4">
               <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-3 flex items-center justify-between border border-slate-100 dark:border-slate-800">
                   <div className="flex items-center gap-3">

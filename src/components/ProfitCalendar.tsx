@@ -15,11 +15,9 @@ export const ProfitCalendar: React.FC<ProfitCalendarProps> = ({ funds }) => {
     const [loading, setLoading] = useState(false);
     const [hasTransactions, setHasTransactions] = useState(false);
 
-    // 筛选出持有份额大于0的基金
     const holdingFunds = useMemo(() => funds.filter(f => f.holdingShares > 0), [funds]);
 
     useEffect(() => {
-        // 检查是否有交易记录
         const txCount = funds.reduce((acc, f) => acc + (f.transactions?.length || 0), 0);
         if (txCount === 0) {
             setHasTransactions(false);
@@ -36,60 +34,44 @@ export const ProfitCalendar: React.FC<ProfitCalendarProps> = ({ funds }) => {
 
             setLoading(true);
             try {
-                // 1. 获取历史净值
                 const historyPromises = holdingFunds.map(async (fund) => {
                     const history = await getFundHistoryData(fund.code);
                     return { fund, history };
                 });
 
                 const fundsData = await Promise.all(historyPromises);
-
-                // 2. 每日收益聚合 Map
                 const dailyProfits: { [date: string]: number } = {};
                 
-                // 处理“今日”预估收益 (因为历史数据通常截止到昨天)
                 const today = new Date();
                 const todayStr = today.toISOString().split('T')[0];
                 let todayTotal = 0;
                 holdingFunds.forEach(f => todayTotal += f.estimatedProfit);
                 
-                // 只有在非周末/节假日或者有预估收益时才添加今日
                 if (Math.abs(todayTotal) > 0.01) {
                     dailyProfits[todayStr] = todayTotal;
                 }
 
-                // 3. 回溯计算
                 fundsData.forEach(({ fund, history }) => {
                     if (!history || history.length < 2) return;
                     
-                    // 按照日期升序排列
                     const sortedHistory = history.sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
-                    
-                    // 获取该基金的交易记录，按日期升序
                     const transactions = (fund.transactions || []).sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
                     
-                    // 如果没有交易记录，跳过回溯（无法确定开始时间）
                     if (transactions.length === 0) return;
 
-                    // 确定回溯起点：第一笔交易的日期
                     const startTxDateStr = transactions[0].date;
                     const startTxDate = new Date(startTxDateStr);
 
-                    // 动态持仓份额
                     let currentShares = 0;
                     let txIndex = 0;
 
-                    // 遍历历史净值，从列表头开始
                     for (let i = 1; i < sortedHistory.length; i++) {
                         const currDay = sortedHistory[i];
                         const prevDay = sortedHistory[i-1];
                         const currDateObj = new Date(currDay.date);
 
-                        // 关键：只有当日期 >= 第一笔交易日期时，才开始计算盈亏
                         if (currDateObj < startTxDate) continue;
 
-                        // 更新截止到当前日期的持仓份额
-                        // 处理所有日期 <= currDay.date 的交易
                         while(txIndex < transactions.length) {
                             const tx = transactions[txIndex];
                             const txDate = new Date(tx.date);
@@ -106,7 +88,6 @@ export const ProfitCalendar: React.FC<ProfitCalendarProps> = ({ funds }) => {
                             }
                         }
 
-                        // 如果当天持有份额 > 0，计算当日盈亏
                         if (currentShares > 0) {
                             const dayProfit = (currDay.value - prevDay.value) * currentShares;
                             if (dailyProfits[currDay.date]) {
@@ -118,7 +99,6 @@ export const ProfitCalendar: React.FC<ProfitCalendarProps> = ({ funds }) => {
                     }
                 });
 
-                // 4. 聚合数据
                 const aggregatedData: any[] = [];
                 
                 if (view === 'DAY') {
@@ -130,7 +110,7 @@ export const ProfitCalendar: React.FC<ProfitCalendarProps> = ({ funds }) => {
                         aggregatedData.push({
                             name: `${d.getMonth() + 1}/${d.getDate()}`,
                             fullDate: dStr,
-                            value: Math.round(val)
+                            value: parseFloat(val.toFixed(2))
                         });
                     }
                 } else if (view === 'WEEK') {
@@ -156,7 +136,7 @@ export const ProfitCalendar: React.FC<ProfitCalendarProps> = ({ funds }) => {
                      
                      for (let i = weeks.length - 1; i >= 0; i--) {
                          const w = weeks[i];
-                         aggregatedData.push({ name: w, value: Math.round(weekMap[w]) });
+                         aggregatedData.push({ name: w, value: parseFloat(weekMap[w].toFixed(2)) });
                      }
                 } else if (view === 'MONTH') {
                     for (let i = 11; i >= 0; i--) {
@@ -168,7 +148,7 @@ export const ProfitCalendar: React.FC<ProfitCalendarProps> = ({ funds }) => {
                         Object.keys(dailyProfits).forEach(date => {
                             if (date.startsWith(key)) monthSum += dailyProfits[date];
                         });
-                        aggregatedData.push({ name, value: Math.round(monthSum) });
+                        aggregatedData.push({ name, value: parseFloat(monthSum.toFixed(2)) });
                     }
                 } else if (view === 'YEAR') {
                     for (let i = 4; i >= 0; i--) {
@@ -178,25 +158,15 @@ export const ProfitCalendar: React.FC<ProfitCalendarProps> = ({ funds }) => {
                          Object.keys(dailyProfits).forEach(date => {
                             if (date.startsWith(year.toString())) yearSum += dailyProfits[date];
                         });
-                         aggregatedData.push({ name: year.toString(), value: Math.round(yearSum) });
+                         aggregatedData.push({ name: year.toString(), value: parseFloat(yearSum.toFixed(2)) });
                     }
                 }
 
                 setChartData(aggregatedData);
-                if (view === 'DAY') {
-                    // 对于日视图，显示当日（最后一天）的收益
-                    if (aggregatedData.length > 0) {
-                        setTotalProfit(aggregatedData[aggregatedData.length - 1].value);
-                    } else {
-                        setTotalProfit(0);
-                    }
+                if (aggregatedData.length > 0) {
+                     setTotalProfit(aggregatedData[aggregatedData.length - 1].value);
                 } else {
-                    // 对于其他视图，显示当前聚合的第一个（即本周、本月、本年）
-                    if (aggregatedData.length > 0) {
-                        setTotalProfit(aggregatedData[aggregatedData.length - 1].value);
-                    } else {
-                         setTotalProfit(0);
-                    }
+                     setTotalProfit(0);
                 }
 
             } catch (e) {
@@ -256,11 +226,10 @@ export const ProfitCalendar: React.FC<ProfitCalendarProps> = ({ funds }) => {
                 <div className="relative z-10">
                     <div className="text-indigo-100 text-xs mb-1 font-medium">{labelMap[view]}</div>
                     <div className="text-3xl font-black flex items-center gap-2">
-                        {totalProfit > 0 ? '+' : ''}{totalProfit.toLocaleString()} <span className="text-sm font-normal opacity-80">元</span>
+                        {totalProfit > 0 ? '+' : ''}{totalProfit.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})} <span className="text-sm font-normal opacity-80">元</span>
                     </div>
                 </div>
 
-                 {/* Background decoration */}
                  <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-white/10 rounded-full blur-2xl"></div>
                  <div className="absolute bottom-0 left-0 -mb-4 -ml-4 w-20 h-20 bg-indigo-900/20 rounded-full blur-2xl"></div>
             </div>
@@ -284,7 +253,7 @@ export const ProfitCalendar: React.FC<ProfitCalendarProps> = ({ funds }) => {
                             <Tooltip 
                                 cursor={{fill: 'rgba(0,0,0,0.02)'}}
                                 contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)', fontSize: '12px'}}
-                                formatter={(val: number) => [`${val > 0 ? '+' : ''}${val}元`, '盈亏']}
+                                formatter={(val: number) => [`${val > 0 ? '+' : ''}${val.toFixed(2)}元`, '盈亏']}
                                 labelStyle={{color: '#64748b', marginBottom: '4px'}}
                             />
                             <Bar dataKey="value" radius={[4, 4, 4, 4]}>

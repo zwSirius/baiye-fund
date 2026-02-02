@@ -14,10 +14,19 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = ({ marketCodes, o
     const [rankType, setRankType] = useState<'GAIN' | 'LOSS'>('GAIN');
 
     const loadData = async () => {
-        setIsLoading(true);
-        const res = await fetchMarketOverview(marketCodes);
-        if (res) setData(res);
-        setIsLoading(false);
+        // Only set full loading state if we don't have data yet
+        if (!data) setIsLoading(true);
+        
+        try {
+            const res = await fetchMarketOverview(marketCodes);
+            if (res) {
+                setData(res);
+            }
+        } catch (e) {
+            console.error("Failed to load market data", e);
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     useEffect(() => {
@@ -37,7 +46,7 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = ({ marketCodes, o
                     <BarChart3 className="text-blue-500" size={20}/> 市场全景
                 </h2>
                 <button 
-                    onClick={loadData} 
+                    onClick={() => { setIsLoading(true); loadData(); }} 
                     className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 transition active:rotate-180"
                 >
                     <RefreshCw size={18} className={isLoading ? 'animate-spin' : ''} />
@@ -53,19 +62,26 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = ({ marketCodes, o
                     </button>
                 </div>
                 <div className="grid grid-cols-3 gap-3">
-                    {isLoading ? [1,2,3,4,5,6].map(i => <Skeleton key={i} className="h-20 w-full"/>) : (
-                        data?.indices.map((idx) => (
-                            <div key={idx.code} className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col items-center justify-center text-center">
-                                <div className="text-xs text-slate-500 dark:text-slate-400 mb-1 truncate w-full">{idx.name}</div>
-                                <div className={`text-lg font-black tracking-tight ${idx.changePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                                    {idx.value?.toFixed(2)}
+                    {/* Render skeletons if hard loading and no data */}
+                    {(isLoading && !data) ? [1,2,3,4,5,6].map(i => <Skeleton key={i} className="h-20 w-full"/>) : (
+                        (data?.indices && data.indices.length > 0) ? (
+                            data.indices.map((idx) => (
+                                <div key={idx.code} className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col items-center justify-center text-center animate-scale-in">
+                                    <div className="text-xs text-slate-500 dark:text-slate-400 mb-1 truncate w-full">{idx.name}</div>
+                                    <div className={`text-lg font-black tracking-tight ${idx.changePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
+                                        {idx.value?.toFixed(2)}
+                                    </div>
+                                    <div className={`text-xs font-bold ${idx.changePercent >= 0 ? 'text-up-red' : 'text-down-green'} flex items-center gap-0.5`}>
+                                        {idx.changePercent >= 0 ? <TrendingUp size={10}/> : <TrendingDown size={10}/>}
+                                        {idx.changePercent > 0 ? '+' : ''}{idx.changePercent}%
+                                    </div>
                                 </div>
-                                <div className={`text-xs font-bold ${idx.changePercent >= 0 ? 'text-up-red' : 'text-down-green'} flex items-center gap-0.5`}>
-                                    {idx.changePercent >= 0 ? <TrendingUp size={10}/> : <TrendingDown size={10}/>}
-                                    {idx.changePercent > 0 ? '+' : ''}{idx.changePercent}%
-                                </div>
+                            ))
+                        ) : (
+                            <div className="col-span-3 py-6 text-center text-slate-400 text-xs bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-dashed border-slate-200 dark:border-slate-700">
+                                {isLoading ? '正在获取指数数据...' : '暂无指数数据，请检查网络或配置'}
                             </div>
-                        ))
+                        )
                     )}
                 </div>
             </div>
@@ -82,12 +98,12 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = ({ marketCodes, o
                             <span>领涨板块</span> <TrendingUp size={12}/>
                         </div>
                         <div className="space-y-2">
-                            {isLoading ? [1,2,3].map(i => <Skeleton key={i} className="h-8 w-full"/>) : (
+                            {(isLoading && !data) ? [1,2,3].map(i => <Skeleton key={i} className="h-8 w-full"/>) : (
                                 data?.sectors.top.map((s, idx) => (
                                     <SectorRow key={s.name} rank={idx+1} name={s.name} change={s.changePercent} stock={s.leadingStock} type="up"/>
                                 ))
                             )}
-                            {!isLoading && data?.sectors.top.length === 0 && <EmptyState text="暂无数据" />}
+                            {(!isLoading && (!data || data.sectors.top.length === 0)) && <EmptyState text="暂无数据" />}
                         </div>
                     </div>
                     {/* Losers */}
@@ -96,12 +112,12 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = ({ marketCodes, o
                             <span>领跌板块</span> <TrendingDown size={12}/>
                         </div>
                         <div className="space-y-2">
-                            {isLoading ? [1,2,3].map(i => <Skeleton key={i} className="h-8 w-full"/>) : (
+                            {(isLoading && !data) ? [1,2,3].map(i => <Skeleton key={i} className="h-8 w-full"/>) : (
                                 data?.sectors.bottom.map((s, idx) => (
                                     <SectorRow key={s.name} rank={idx+1} name={s.name} change={s.changePercent} stock={s.leadingStock} type="down"/>
                                 ))
                             )}
-                            {!isLoading && data?.sectors.bottom.length === 0 && <EmptyState text="暂无数据" />}
+                            {(!isLoading && (!data || data.sectors.bottom.length === 0)) && <EmptyState text="暂无数据" />}
                         </div>
                     </div>
                 </div>
@@ -135,7 +151,7 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = ({ marketCodes, o
                         <div className="col-span-2 text-right">涨跌</div>
                     </div>
                     <div>
-                        {isLoading ? [1,2,3,4,5].map(i => <div key={i} className="p-3 border-b border-slate-50 dark:border-slate-800"><Skeleton className="h-4 w-full"/></div>) : (
+                        {(isLoading && !data) ? [1,2,3,4,5].map(i => <div key={i} className="p-3 border-b border-slate-50 dark:border-slate-800"><Skeleton className="h-4 w-full"/></div>) : (
                             (rankType === 'GAIN' ? data?.fundRankings.gainers : data?.fundRankings.losers)?.map((f, idx) => (
                                 <div key={f.code} className="grid grid-cols-12 gap-2 p-3 border-b border-slate-50 dark:border-slate-800 last:border-0 items-center hover:bg-slate-50 dark:hover:bg-slate-800 transition">
                                     <div className={`col-span-1 text-xs font-bold ${idx < 3 ? 'text-orange-500' : 'text-slate-400'}`}>{idx + 1}</div>
@@ -152,7 +168,7 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = ({ marketCodes, o
                                 </div>
                             ))
                         )}
-                        {!isLoading && (!data?.fundRankings.gainers.length) && <EmptyState text="数据加载中或休市" />}
+                        {(!isLoading && (!data || !data.fundRankings.gainers.length)) && <EmptyState text="数据加载中或休市" />}
                     </div>
                 </div>
                 <div className="text-center py-4 text-[10px] text-slate-400">
