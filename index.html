@@ -7,8 +7,7 @@
     
     <!-- PWA / Mobile Web App Meta Tags -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <!-- Changed to default to prevent white text on white background issues in some OS versions, or black-translucent with proper CSS handling -->
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="format-detection" content="telephone=no" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
@@ -58,9 +57,6 @@
         overscroll-behavior-y: none; /* Prevent pull-to-refresh on body */
       }
       /* Safe area padding for iPhone X+ */
-      .pt-safe {
-        padding-top: env(safe-area-inset-top);
-      }
       .pb-safe {
         padding-bottom: env(safe-area-inset-bottom);
       }

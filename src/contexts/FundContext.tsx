@@ -6,6 +6,7 @@ import {
     getStoredMarketCodes, saveMarketCodes,
     updateFundEstimates, fetchMarketIndices 
 } from '../services/fundService';
+import { calculateFundMetrics } from '../utils/finance';
 
 interface FundContextType {
     funds: Fund[];
@@ -37,11 +38,9 @@ export const useFund = () => {
 };
 
 export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    // 优化：直接在初始化时读取 LocalStorage，避免初始空状态
-    const [funds, setFunds] = useState<Fund[]>(getInitialFunds);
-    const [groups, setGroups] = useState<Group[]>(getStoredGroups);
-    const [marketCodes, setMarketCodes] = useState<string[]>(getStoredMarketCodes);
-    
+    const [funds, setFunds] = useState<Fund[]>([]);
+    const [groups, setGroups] = useState<Group[]>([]);
+    const [marketCodes, setMarketCodes] = useState<string[]>([]);
     const [sectorIndices, setSectorIndices] = useState<SectorIndex[]>([]);
     
     const [isRefreshing, setIsRefreshing] = useState(false);
@@ -49,11 +48,19 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // --- Initialization ---
     useEffect(() => {
+        const initialFunds = getInitialFunds();
+        const initialGroups = getStoredGroups();
+        const storedMarketCodes = getStoredMarketCodes();
+
+        setFunds(initialFunds);
+        setGroups(initialGroups);
+        setMarketCodes(storedMarketCodes);
+
         // Silent fetch on load
-        if (funds.length > 0) {
-            updateFundEstimates(funds).then(setFunds);
+        if (initialFunds.length > 0) {
+            updateFundEstimates(initialFunds).then(setFunds);
         }
-        fetchMarketIndices(marketCodes).then(setSectorIndices);
+        fetchMarketIndices(storedMarketCodes).then(setSectorIndices);
     }, []);
 
     // --- Persistence ---
@@ -104,6 +111,13 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const removeGroup = useCallback((id: string) => {
         setGroups(prev => prev.filter(g => g.id !== id));
+        // Reset funds in this group to default? Or remove? 
+        // Logic: Usually we might want to move them to default, but here we just delete the group tag?
+        // Let's implement logic: Delete group, funds stay but groupId needs handling? 
+        // For simplicity based on previous App.tsx logic: it removed funds too or set to empty.
+        // Let's safe-guard: funds in deleted group move to default or are hidden? 
+        // Original logic: setFunds(prev => prev.filter(f => f.groupId !== groupId));
+        // We will keep original destructive logic for consistency.
         setFunds(prev => prev.filter(f => f.groupId !== id));
     }, []);
 
@@ -128,6 +142,8 @@ export const FundProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const visibleFunds = funds.filter(f => !f.isWatchlist && f.holdingShares > 0);
         
         visibleFunds.forEach(f => {
+            // Re-verify profit calculation using utility to be safe, though fund.estimatedProfit should be up to date
+            // But relying on stored state is faster for rendering.
             totalProfit += f.estimatedProfit;
             const mv = f.estimatedNav * f.holdingShares;
             totalMarketValue += mv;

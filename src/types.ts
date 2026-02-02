@@ -1,4 +1,3 @@
-
 export interface Stock {
   code: string;
   name: string;
@@ -56,7 +55,7 @@ export interface SectorIndex {
   changePercent: number;
   score: number; // 0-100 hot score
   leadingStock: string; // 领涨股
-  value: number; // 当前点位
+  value?: number; // 当前点位
 }
 
 export interface MarketSentiment {

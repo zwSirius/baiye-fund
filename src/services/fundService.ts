@@ -157,15 +157,9 @@ export const fetchFundDetails = async (fund: Fund): Promise<Fund> => {
         
         const data = await response.json();
         
-        // Smart Tag Update: Use backend industry tag if available
-        const smartTags = data.industry && data.industry.trim() !== "" 
-            ? [data.industry] 
-            : fund.tags;
-
         return {
             ...fund,
             manager: data.manager || fund.manager,
-            tags: smartTags,
             holdings: Array.isArray(data.holdings) ? data.holdings.map((h: any) => ({
                 code: h.code,
                 name: h.name,

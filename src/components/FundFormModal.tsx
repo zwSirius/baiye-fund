@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Fund, Group, Transaction } from '../types';
-import { searchFunds, fetchRealTimeEstimate, fetchFundDetails } from '../services/fundService';
+import { searchFunds, fetchRealTimeEstimate } from '../services/fundService';
 import { calculateFundMetrics } from '../utils/finance';
 import { X, Search, Loader2, Plus, Check, Users, DollarSign, PieChart, Eye, ArrowRight } from 'lucide-react';
 
@@ -80,12 +80,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
     setIsLoadingDetails(true);
 
     try {
-        // Parallel fetch: Real-time estimate AND Detailed Info (for smart tags)
-        // fetchFundDetails calls /api/fund/{code} which now returns smart industry tags
-        const [realData, detailedFund] = await Promise.all([
-            fetchRealTimeEstimate(fund.code),
-            fetchFundDetails(fund)
-        ]);
+        const realData = await fetchRealTimeEstimate(fund.code);
         
         let finalName = fund.name;
         let lastNav = 0;
@@ -105,13 +100,9 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
              source = realData.source || "official";
         }
 
-        // Use tags from detailedFund (which contains the smart industry tag)
-        const smartTags = detailedFund.tags && detailedFund.tags.length > 0 && detailedFund.tags[0] !== "" ? detailedFund.tags : fund.tags;
-
         const fundBase = {
             ...fund,
             name: finalName,
-            tags: smartTags, // Updated tags
             lastNav,
             lastNavDate,
             estimatedNav,
@@ -232,12 +223,9 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
   return (
     <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center sm:p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose}></div>
-      <div 
-        className="bg-white dark:bg-slate-900 w-full max-w-md sm:rounded-2xl rounded-t-2xl shadow-xl z-10 flex flex-col overflow-hidden animate-slide-up sm:animate-fade-in transition-all"
-        style={{ height: 'calc(90vh - env(safe-area-inset-bottom))' }} 
-      >
+      <div className="bg-white dark:bg-slate-900 w-full max-w-md h-[90vh] sm:h-auto sm:rounded-2xl rounded-t-2xl shadow-xl z-10 flex flex-col overflow-hidden animate-slide-up sm:animate-fade-in transition-all">
         
-        <div className="flex justify-between items-center p-4 border-b border-slate-100 dark:border-slate-800 shrink-0">
+        <div className="flex justify-between items-center p-4 border-b border-slate-100 dark:border-slate-800">
           <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
             {isWatchlistMode ? <Eye className="text-blue-500" size={20}/> : null}
             {isWatchlistMode ? '添加自选基金' : (initialFund ? '编辑持仓' : (step === 'search' ? '添加持仓' : '配置持仓'))}
@@ -247,14 +235,13 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto bg-slate-50 dark:bg-slate-950 p-4 relative no-scrollbar">
+        <div className="flex-1 overflow-y-auto bg-slate-50 dark:bg-slate-950 p-4 relative">
           {isLoadingDetails && (
               <div className="absolute inset-0 bg-white/80 dark:bg-slate-900/80 z-20 flex flex-col items-center justify-center backdrop-blur-sm">
                   <Loader2 className="animate-spin text-blue-500 mb-2" size={32} />
                   <span className="text-sm font-bold text-slate-600 dark:text-slate-300">
                       {isWatchlistMode ? '正在添加到自选...' : '正在获取数据...'}
                   </span>
-                  <span className="text-xs text-slate-400 mt-1">分析持仓 & 行业归类中...</span>
               </div>
           )}
 
@@ -320,15 +307,12 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
           )}
 
           {step === 'input' && selectedFund && !isWatchlistMode && (
-             <div className="space-y-4 animate-fade-in pb-20">
+             <div className="space-y-4 animate-fade-in">
                 <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-blue-100 dark:border-blue-900 shadow-sm">
                    <div className="text-sm text-slate-500 dark:text-slate-400 mb-1">当前基金</div>
                    <div className="font-bold text-lg text-slate-800 dark:text-slate-100">{selectedFund.name}</div>
                    <div className="flex justify-between items-end mt-2">
-                       <div className="flex items-center gap-2">
-                          <div className="text-xs text-blue-500 font-mono bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded">{selectedFund.code}</div>
-                          {selectedFund.tags && selectedFund.tags.length > 0 && <div className="text-xs text-slate-400">{selectedFund.tags[0]}</div>}
-                       </div>
+                       <div className="text-xs text-blue-500 font-mono bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded">{selectedFund.code}</div>
                        <div className="text-right">
                            <div className="text-[10px] text-slate-400">实时估值</div>
                            <div className={`font-bold ${selectedFund.estimatedChangePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
@@ -411,7 +395,7 @@ export const FundFormModal: React.FC<FundFormModalProps> = ({ isOpen, onClose, o
         </div>
 
         {step === 'input' && !isWatchlistMode && (
-          <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0 pb-safe">
+          <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900">
             <button 
               onClick={handleConfirm}
               className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl shadow-lg hover:bg-blue-700 active:scale-[0.98] transition flex items-center justify-center gap-2"

@@ -32,7 +32,7 @@ const App: React.FC = () => {
   const { 
     funds, groups, marketCodes, sectorIndices, isRefreshing, lastUpdate,
     refreshData, addOrUpdateFund, removeFund, addGroup, removeGroup, updateMarketCodes,
-    getFundsByGroup
+    getFundsByGroup, getTotalAssets 
   } = useFund();
 
   const [activeTab, setActiveTab] = useState<TabView>(TabView.DASHBOARD);
@@ -71,22 +71,9 @@ const App: React.FC = () => {
   const [currentAnalyzingFund, setCurrentAnalyzingFund] = useState<string>("");
 
   // Derived Values
+  const totals = getTotalAssets();
   const visibleDashboardFunds = getFundsByGroup(currentGroupId);
   const watchlistFunds = funds.filter(f => f.isWatchlist || f.holdingShares === 0);
-  
-  // Calculate Totals based on VISIBLE FUNDS (Current Group)
-  const dashboardTotals = useMemo(() => {
-    let totalProfit = 0;
-    let totalMarketValue = 0;
-    
-    visibleDashboardFunds.forEach(f => {
-        totalProfit += f.estimatedProfit;
-        const mv = f.estimatedNav * f.holdingShares;
-        totalMarketValue += mv;
-    });
-
-    return { totalProfit, totalMarketValue };
-  }, [visibleDashboardFunds]);
   
   const editingFund = useMemo(() => funds.find(f => f.id === editingFundId) || null, [funds, editingFundId]);
   const selectedFund = useMemo(() => funds.find(f => f.id === selectedFundId) || null, [funds, selectedFundId]);
@@ -210,8 +197,8 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans pb-20 max-w-md mx-auto shadow-2xl relative overflow-hidden transition-colors">
       {/* Header */}
-      <header className="bg-white dark:bg-slate-900 px-4 pt-safe pb-3 sticky top-0 z-10 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center transition-colors shadow-sm h-[60px] box-content">
-        <div className="flex items-center gap-2 pt-2">
+      <header className="bg-white dark:bg-slate-900 px-4 pt-10 pb-3 sticky top-0 z-10 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center transition-colors">
+        <div className="flex items-center gap-2">
             <div>
                 <h1 className="text-xl font-black text-slate-800 dark:text-white tracking-tight flex items-center gap-1">
                     Smart<span className="text-blue-600">Fund</span>
@@ -224,7 +211,7 @@ const App: React.FC = () => {
         </div>
         <button 
             onClick={() => { setEditingFundId(null); setIsWatchlistMode(false); setAddModalOpen(true); }}
-            className="bg-blue-600 text-white p-2 mt-2 rounded-full hover:bg-blue-700 shadow-lg shadow-blue-200 dark:shadow-blue-900/30 transition active:scale-95"
+            className="bg-blue-600 text-white p-2 rounded-full hover:bg-blue-700 shadow-lg shadow-blue-200 dark:shadow-blue-900/30 transition active:scale-95"
         >
            <Plus size={18} />
         </button>
@@ -237,8 +224,8 @@ const App: React.FC = () => {
                 funds={visibleDashboardFunds}
                 groups={groups}
                 currentGroupId={currentGroupId}
-                totalProfit={dashboardTotals.totalProfit}
-                totalMarketValue={dashboardTotals.totalMarketValue}
+                totalProfit={totals.totalProfit}
+                totalMarketValue={totals.totalMarketValue}
                 lastUpdate={lastUpdate}
                 isRefreshing={isRefreshing}
                 isPrivacyMode={isPrivacyMode}
@@ -284,7 +271,7 @@ const App: React.FC = () => {
                              <div key={sector.name} className="bg-white dark:bg-slate-900 p-3 rounded-lg shadow-sm border border-slate-100 dark:border-slate-800 flex justify-between items-center">
                                  <div>
                                      <div className="text-sm font-bold text-slate-700 dark:text-slate-200">{sector.name}</div>
-                                     <div className="text-[12px] font-mono font-medium text-slate-500 dark:text-slate-400 mt-1">{sector.value ? sector.value.toFixed(2) : '--'}</div>
+                                     <div className="text-[10px] text-slate-400 mt-1">热度: {sector.score}</div>
                                  </div>
                                  <div className={`text-base font-bold ${sector.changePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
                                      {sector.changePercent > 0 ? '+' : ''}{sector.changePercent}%
