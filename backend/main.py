@@ -109,6 +109,14 @@ class AkshareService:
         }
 
     @staticmethod
+    def get_quote_headers():
+        return {
+            "User-Agent": random.choice(USER_AGENTS),
+            "Referer": "http://quote.eastmoney.com/",
+            "Connection": "keep-alive"
+        }
+
+    @staticmethod
     def get_time_phase():
         now = datetime.utcnow() + timedelta(hours=8)
         if now.weekday() >= 5: return 'WEEKEND'
@@ -176,10 +184,17 @@ class AkshareService:
             
             if sorted_df.empty: return []
             latest_rank = sorted_df.iloc[0]['rank']
-            return [
-                {"code": str(r['股票代码']), "name": str(r['股票名称']), "percent": float(r['占净值比例'])}
-                for _, r in sorted_df[sorted_df['rank'] == latest_rank].head(10).iterrows()
-            ]
+            
+            holdings = []
+            for _, r in sorted_df[sorted_df['rank'] == latest_rank].head(10).iterrows():
+                # Strip whitespace and ensure string
+                raw_code = str(r['股票代码']).strip()
+                holdings.append({
+                    "code": raw_code,
+                    "name": str(r['股票名称']).strip(),
+                    "percent": float(r['占净值比例'])
+                })
+            return holdings
         except Exception as e:
             logger.error(f"Holdings error {code}: {e}")
             return []
@@ -194,7 +209,6 @@ class AkshareService:
                 df = ak.fund_portfolio_industry_allocation_em(symbol=code, date=datetime.now().year - 1)
             
             if not df.empty:
-                 # Columns: 截止时间, 行业类别, 市值, 占净值比例...
                  df['占净值比例'] = pd.to_numeric(df['占净值比例'], errors='coerce')
                  top = df.sort_values('占净值比例', ascending=False).iloc[0]
                  return str(top['行业类别'])
@@ -204,36 +218,52 @@ class AkshareService:
     @staticmethod
     def fetch_stock_quotes_sync(codes: List[str]) -> Dict[str, Dict[str, float]]:
         if not codes: return {}
-        unique = list(set(codes))
+        # Clean codes
+        unique = list(set([c.strip() for c in codes if c.strip()]))
         quotes = {}
         batch_size = 40
+        
         for i in range(0, len(unique), batch_size):
             batch = unique[i:i+batch_size]
             secids = []
-            for c in batch:
-                if len(c) == 6:
-                    if c.startswith('6'): secids.append(f"1.{c}")
-                    elif c.startswith('0') or c.startswith('3'): secids.append(f"0.{c}")
-                    elif c.startswith('4') or c.startswith('8'): secids.append(f"0.{c}")
-                    else: secids.append(f"0.{c}") # Fallback
-                elif len(c) == 5: # HK
-                     secids.append(f"116.{c}") # Eastmoney HK
-                else:
-                    secids.append(f"0.{c}")
             
-            # f2: price, f3: change%
-            url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f2,f3,f12&secids={','.join(secids)}"
+            for c in batch:
+                prefix = "0"
+                if len(c) == 6:
+                    if c.startswith('6') or c.startswith('9'): 
+                        prefix = "1"
+                    else:
+                        prefix = "0" # 00, 30, 8x, 4x, 20
+                elif len(c) == 5:
+                    prefix = "116" # HK Connect
+                elif len(c) < 5 and c.isdigit():
+                    # Fallback for codes that might be missing zeros
+                    c = c.zfill(5)
+                    prefix = "116"
+                
+                secids.append(f"{prefix}.{c}")
+            
+            if not secids: continue
+
+            # Using 6.push2.eastmoney.com with fltt=2 for float precision
+            url = f"http://6.push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f2,f3,f12,f14&secids={','.join(secids)}"
             try:
-                resp = GlobalSession.get().get(url, headers=AkshareService.get_headers(), timeout=3.0)
+                resp = GlobalSession.get().get(url, headers=AkshareService.get_quote_headers(), timeout=4.0)
                 data = resp.json()
                 if data and 'data' in data and 'diff' in data['data']:
-                    for item in data['data']['diff']:
-                        quotes[str(item['f12'])] = {
+                    diff = data['data']['diff']
+                    # Handle dict response
+                    if isinstance(diff, dict): diff = diff.values()
+                        
+                    for item in diff:
+                        ret_code = str(item['f12'])
+                        # Sometimes HK codes returned as 5 digits, matching input.
+                        quotes[ret_code] = {
                             "price": float(item['f2']) if item['f2'] != '-' else 0.0,
                             "change": float(item['f3']) if item['f3'] != '-' else 0.0
                         }
             except Exception as e: 
-                logger.error(f"Quote fetch error: {e}")
+                logger.error(f"Quote fetch error for batch {batch}: {e}")
         return quotes
 
     @staticmethod
@@ -295,10 +325,8 @@ class FundController:
         # 3. Smart Tagging (Industry)
         industry_tag = cache_service.get_industry(code)
         if not industry_tag:
-            # Try Akshare Industry Allocation first
             industry_tag = await run_in_threadpool(AkshareService.fetch_industry_sync, code)
             
-            # If Akshare fails and we have holdings, use Gemini to infer
             if not industry_tag and holdings and GEMINI_API_KEY:
                 try:
                     stocks = ", ".join([h['name'] for h in holdings[:5]])
@@ -311,7 +339,7 @@ class FundController:
                     logger.warning(f"Gemini tag inference failed: {e}")
 
             if not industry_tag:
-                 industry_tag = "混合型" # Fallback
+                 industry_tag = "" 
 
             cache_service.set_industry(code, industry_tag)
 
@@ -320,6 +348,15 @@ class FundController:
             quotes = await run_in_threadpool(AkshareService.fetch_stock_quotes_sync, [h['code'] for h in holdings])
             for h in holdings: 
                 q = quotes.get(h['code'])
+                
+                # Robust fallback for HK/Numeric codes (e.g. 00883 vs 883)
+                if not q and h['code'].isdigit():
+                    # Try stripping leading zeros
+                    q = quotes.get(str(int(h['code'])))
+                    if not q:
+                        # Try padding to 5 digits
+                         q = quotes.get(h['code'].zfill(5))
+                         
                 if q:
                     h['changePercent'] = q['change']
                     h['currentPrice'] = q['price']
@@ -371,20 +408,16 @@ class FundController:
             
             need_calc = False
             
-            # Logic: If official estimate (gszzl) is 0.00 during trading/lunch, it's likely stuck.
-            # We force calculation in this case to provide value.
-            # Exception: ETF Feeders usually rely on official/market price, holdings penetration is weak.
-            
             off_gsz = float(res.get("gsz", 0))
             off_gszzl = float(res.get("gszzl", 0))
             
+            # Force calc if official estimate looks dead (0.00%) during market hours
             if phase in ['MARKET', 'LUNCH_BREAK']:
-                 # If official estimate is effectively zero change (and likely stuck), OR invalid
                  if (abs(off_gszzl) < 0.001 and abs(off_gsz - last_nav) < 0.001) or off_gsz <= 0:
                      if not is_etf_feeder:
                          need_calc = True
             
-            # Override for post-market if not updated
+            # Post-market logic
             if phase == 'POST_MARKET' and res.get('jzrq') != today_str and not is_etf_feeder:
                 need_calc = True
 
@@ -393,7 +426,6 @@ class FundController:
 
         # Perform Calculation
         if calc_needed:
-            # 1. Ensure holdings
             codes_for_holding_fetch = []
             for c in calc_needed:
                 if not cache_service.get_holdings(c): codes_for_holding_fetch.append(c)
@@ -404,7 +436,6 @@ class FundController:
                  for i, c in enumerate(codes_for_holding_fetch):
                      cache_service.set_holdings(c, fetched_h[i])
             
-            # 2. Get all stocks
             all_stocks = []
             fund_holdings_map = {}
             for c in calc_needed:
@@ -412,10 +443,8 @@ class FundController:
                 fund_holdings_map[c] = h
                 all_stocks.extend([x['code'] for x in h])
             
-            # 3. Fetch Quotes
             quotes = await run_in_threadpool(AkshareService.fetch_stock_quotes_sync, all_stocks)
             
-            # 4. Calc
             for c in calc_needed:
                 data = results_map[c]
                 holdings = fund_holdings_map.get(c, [])
@@ -426,6 +455,11 @@ class FundController:
                 for h in holdings:
                     w = h['percent']
                     q = quotes.get(h['code'])
+                    # Fallback for code matching
+                    if not q and h['code'].isdigit():
+                        q = quotes.get(str(int(h['code'])))
+                        if not q: q = quotes.get(h['code'].zfill(5))
+                    
                     change = q['change'] if q else 0
                     weighted_change += (change * w)
                     total_weight += w
@@ -433,10 +467,8 @@ class FundController:
                 est_change = 0
                 if total_weight > 0:
                     normalized_change = weighted_change / total_weight
-                    est_change = normalized_change * 0.95 # Dampening
+                    est_change = normalized_change * 0.95 
                 
-                # Only update if we actually calculated something non-zero, or if we want to show 0
-                # But to avoid replacing a valid 0 with a calc 0, we trust the calc if official was stuck.
                 est_nav = data['_last_nav'] * (1 + est_change / 100.0)
                 data['gsz'] = "{:.4f}".format(est_nav)
                 data['gszzl'] = "{:.4f}".format(est_change)
@@ -483,19 +515,17 @@ async def search(key: str = Query(..., min_length=1)):
 async def market(codes: str = Query(None)):
     target_codes = codes.split(',') if codes else ["1.000001", "0.399001"]
     
-    # Check if code is secid formatted (has dot)
     def format_secid(c):
         if '.' in c: return c 
-        # Heuristic for generic codes if passed without prefix
         if c.startswith('6') or c.startswith('1') or c.startswith('5'): return f"1.{c}"
         if c.startswith('0') or c.startswith('3') or c.startswith('4') or c.startswith('8'): return f"0.{c}"
         return f"0.{c}"
 
     secids = [format_secid(c) for c in target_codes] 
     
-    url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f3,f12,f14,f2&secids={','.join(secids)}"
+    url = f"http://6.push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f3,f12,f14,f2&secids={','.join(secids)}"
     try:
-        resp = await run_in_threadpool(lambda: requests.get(url, headers=AkshareService.get_headers(), timeout=3))
+        resp = await run_in_threadpool(lambda: requests.get(url, headers=AkshareService.get_quote_headers(), timeout=3))
         data = resp.json()
         result = []
         if data and 'data' in data and 'diff' in data['data']:
@@ -503,7 +533,6 @@ async def market(codes: str = Query(None)):
                 change = float(item['f3']) if item['f3'] != '-' else 0.0
                 price = float(item['f2']) if item['f2'] != '-' else 0.0
                 score = max(0, min(100, 50 + change * 10))
-                # f12 code, f14 name
                 result.append({
                     "name": item['f14'], 
                     "code": str(item['f12']), 
