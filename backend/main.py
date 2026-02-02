@@ -84,13 +84,15 @@ class AkshareService:
     """AKShare / Eastmoney 接口封装"""
     
     @staticmethod
-    def get_headers(referer="http://fund.eastmoney.com/"):
-        return {
+    def get_headers(referer=None):
+        h = {
             "User-Agent": random.choice(USER_AGENTS),
-            "Referer": referer,
             "Connection": "keep-alive",
             "Accept": "*/*"
         }
+        if referer:
+            h["Referer"] = referer
+        return h
 
     @staticmethod
     def get_time_phase():
@@ -140,6 +142,7 @@ class AkshareService:
             # 使用 HTTPS，移除 gszzl_ 前缀
             url = f"https://fundgz.1234567.com.cn/js/{code}.js?rt={ts}"
             
+            # 使用通用头，避免 referer 问题
             headers = AkshareService.get_headers(referer="https://fund.eastmoney.com/")
             
             resp = GlobalSession.get().get(url, headers=headers, timeout=2.0)
@@ -147,7 +150,7 @@ class AkshareService:
             if resp.status_code == 200:
                 # 返回格式: jsonpgz({"fundcode":"001186", ...});
                 # 非贪婪匹配
-                match = re.search(r'jsonpgz\((.*?)\)', resp.text, re.S)
+                match = re.search(r'jsonpgz\s*\((.*?)\)', resp.text, re.S)
                 if match:
                     json_str = match.group(1)
                     json_str = json_str.strip().rstrip(';')
@@ -157,7 +160,6 @@ class AkshareService:
                             data.update(fetched)
                             data['source'] = 'official_realtime'
                     except json.JSONDecodeError:
-                        logger.warning(f"JSON Parse failed for {code}: {json_str[:50]}")
                         pass
         except Exception as e:
             logger.warning(f"Estimate fetch failed for {code}: {e}")
@@ -297,14 +299,25 @@ class AkshareService:
 
             if not secids: continue
 
+            # 使用 http 协议，避免 potential SSL/CORS issues with push2
             url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f2,f3,f12,f14&secids={','.join(secids)}"
             try:
-                # Referer 必须是 quote.eastmoney.com
-                headers = AkshareService.get_headers(referer="https://quote.eastmoney.com/")
+                # 移除 Referer，使用简单 Headers 防止被反爬策略拦截
+                headers = AkshareService.get_headers(referer=None)
                 resp = GlobalSession.get().get(url, headers=headers, timeout=3.0)
                 data = resp.json()
                 if data and 'data' in data and 'diff' in data['data']:
-                    for item in data['data']['diff']:
+                    # diff 可能是 list 也可能是 dict，取决于 invt/fltt 参数，但在 secids 模式下通常是 dict (index -> obj) 或 list
+                    diff_data = data['data']['diff']
+                    
+                    # 统一处理 diff
+                    items = []
+                    if isinstance(diff_data, list):
+                        items = diff_data
+                    elif isinstance(diff_data, dict):
+                        items = diff_data.values()
+
+                    for item in items:
                         code_val = str(item['f12'])
                         quotes[code_val] = {
                             "price": float(item['f2']) if item['f2'] != '-' else 0.0,
@@ -426,8 +439,15 @@ class FundController:
             last_nav = 0.0
             last_date = ""
             
-            if res.get('dwjz') and float(res['dwjz']) > 0:
-                last_nav = float(res['dwjz'])
+            # 安全转换 float
+            def safe_float(v, default=0.0):
+                try:
+                    return float(v)
+                except:
+                    return default
+
+            if res.get('dwjz') and safe_float(res['dwjz']) > 0:
+                last_nav = safe_float(res['dwjz'])
                 last_date = res.get('jzrq', '')
             
             # 如果接口没给昨日净值，从历史数据找
@@ -441,21 +461,13 @@ class FundController:
             res['_last_nav'] = last_nav
             
             # --- 关键修复：判断逻辑 ---
-            gsz = float(res.get('gsz', 0))
-            gszzl = float(res.get('gszzl', 0))
+            gsz = safe_float(res.get('gsz'))
+            gszzl = safe_float(res.get('gszzl'))
             source = res.get('source', 'none')
             
             need_manual = False
             
             # 策略：
-            # 1. 如果 source 是 official_realtime:
-            #    - 如果 gsz > 0，直接用。
-            #    - 如果 gsz <= 0 但 gszzl != 0 且 last_nav > 0，则反推 gsz = last_nav * (1 + gszzl/100)。
-            #    - 如果 gsz <= 0 且 gszzl == 0:
-            #      - 盘中 (MARKET, PRE_MARKET)：强制手动计算。
-            #      - 盘后 (POST_MARKET)：如果 last_date 不是今天，尝试手动计算；否则认为今天涨跌就是0。
-            # 2. 如果 source 是 none，强制手动计算。
-
             if source == 'official_realtime':
                 if gsz > 0:
                     pass
@@ -468,6 +480,7 @@ class FundController:
                     if phase == 'MARKET' or phase == 'PRE_MARKET' or phase == 'LUNCH_BREAK':
                          need_manual = True
                     elif phase == 'POST_MARKET':
+                         # 如果日期不对，或者数据确实是0，尝试计算
                          if res.get('jzrq') != today_str:
                              need_manual = True
             else:
@@ -559,7 +572,7 @@ def status():
     return {
         "phase": AkshareService.get_time_phase(), 
         "ts": datetime.now().timestamp(),
-        "backend": "akshare_fix_v7"
+        "backend": "akshare_fix_v8"
     }
 
 @router.get("/search")
