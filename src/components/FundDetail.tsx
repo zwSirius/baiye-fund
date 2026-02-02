@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Fund, Transaction } from '../types';
 import { getFundHistoryData, fetchFundDetails } from '../services/fundService';
-import { ChevronLeft, FileText, Edit2, Trash2, History, TrendingUp, Loader2, Activity, TrendingDown, Layers, Zap, Info } from 'lucide-react';
+import { ChevronLeft, Edit2, Trash2, History, Loader2, Layers, Zap } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 interface FundDetailProps {
@@ -101,7 +101,9 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
 
   const displayFund = detailedFund;
   const holdingMarketValue = displayFund.estimatedNav * displayFund.holdingShares;
+  const totalCostValue = displayFund.holdingCost * displayFund.holdingShares;
   const totalHoldingProfit = (displayFund.estimatedNav - displayFund.holdingCost) * displayFund.holdingShares + (displayFund.realizedProfit || 0);
+  const holdingProfitRatio = totalCostValue > 0 ? (totalHoldingProfit / totalCostValue) * 100 : 0;
 
   // Calculate Contribution
   const topHoldingsContribution = displayFund.holdings.reduce((acc, h) => acc + (h.percent * h.changePercent / 100), 0);
@@ -142,10 +144,12 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                     <div className="flex items-center gap-1.5 text-xs font-medium text-slate-400 mb-1">
                         {displayFund.source === 'holdings_calc_batch' ? (
                             <span className="flex items-center gap-1 text-blue-500 bg-blue-50 dark:bg-blue-900/20 px-1.5 py-0.5 rounded-md">
-                                <Zap size={10} fill="currentColor"/> 重仓股估算
+                                <Zap size={10} fill="currentColor"/> 重仓估值
                             </span>
                         ) : '官方估值'}
-                        <span>({displayFund.lastNavDate})</span>
+                        <span>
+                            {displayFund.estimateTime ? `更新于 ${displayFund.estimateTime}` : `(${displayFund.lastNavDate})`}
+                        </span>
                     </div>
                     <div className="flex items-baseline gap-3">
                         <span className={`text-4xl font-black tracking-tight ${displayFund.estimatedChangePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
@@ -158,90 +162,42 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                   </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
-                  <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
-                      <div className="text-[10px] text-slate-400 mb-1">持有金额</div>
+              {/* Enhanced Stats Grid */}
+              <div className="grid grid-cols-3 gap-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 border border-slate-100 dark:border-slate-800">
+                  <div className="p-1">
+                      <div className="text-[10px] text-slate-400 mb-0.5">持有金额</div>
                       <div className="text-sm font-bold text-slate-800 dark:text-white">¥{holdingMarketValue.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
                   </div>
-                  <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
-                      <div className="text-[10px] text-slate-400 mb-1">当日盈亏</div>
+                  <div className="p-1 border-l border-slate-200 dark:border-slate-700/50 pl-3">
+                      <div className="text-[10px] text-slate-400 mb-0.5">当日盈亏</div>
                       <div className={`text-sm font-bold ${displayFund.estimatedProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>
                          {displayFund.estimatedProfit > 0 ? '+' : ''}{displayFund.estimatedProfit.toFixed(2)}
                       </div>
                   </div>
-                  <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
-                      <div className="text-[10px] text-slate-400 mb-1">持有盈亏</div>
+                  <div className="p-1 border-l border-slate-200 dark:border-slate-700/50 pl-3">
+                      <div className="text-[10px] text-slate-400 mb-0.5">持有盈亏</div>
                       <div className={`text-sm font-bold ${totalHoldingProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>
                          {totalHoldingProfit > 0 ? '+' : ''}{totalHoldingProfit.toFixed(2)}
                       </div>
                   </div>
+
+                  {/* Row 2: Additional Stats */}
+                  <div className="p-1 pt-2 border-t border-slate-200 dark:border-slate-700/50 mt-2">
+                      <div className="text-[10px] text-slate-400 mb-0.5">持有份额</div>
+                      <div className="text-xs font-medium text-slate-700 dark:text-slate-300">{displayFund.holdingShares.toFixed(2)}</div>
+                  </div>
+                  <div className="p-1 pt-2 border-t border-slate-200 dark:border-slate-700/50 mt-2 border-l pl-3">
+                      <div className="text-[10px] text-slate-400 mb-0.5">单价成本</div>
+                      <div className="text-xs font-medium text-slate-700 dark:text-slate-300">{displayFund.holdingCost.toFixed(4)}</div>
+                  </div>
+                  <div className="p-1 pt-2 border-t border-slate-200 dark:border-slate-700/50 mt-2 border-l pl-3">
+                      <div className="text-[10px] text-slate-400 mb-0.5">收益率</div>
+                      <div className={`text-xs font-bold ${holdingProfitRatio >= 0 ? 'text-up-red' : 'text-down-green'}`}>
+                         {holdingProfitRatio > 0 ? '+' : ''}{holdingProfitRatio.toFixed(2)}%
+                      </div>
+                  </div>
               </div>
           </div>
-
-          {/* Holdings Breakdown */}
-          {activeTab === 'INFO' && (
-              <div className="bg-white dark:bg-slate-900 p-5 mb-3 shadow-sm">
-                 <div className="flex items-center justify-between mb-4">
-                     <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-                        <Layers size={18} className="text-indigo-500" />
-                        重仓股贡献拆解
-                     </h3>
-                     <div className="text-[10px] text-slate-400 bg-slate-50 dark:bg-slate-800 px-2 py-1 rounded-lg">
-                        Top10 贡献: <span className={topHoldingsContribution >= 0 ? 'text-up-red' : 'text-down-green'}>{topHoldingsContribution > 0 ? '+' : ''}{topHoldingsContribution.toFixed(2)}%</span>
-                     </div>
-                 </div>
-
-                 {isLoadingDetails ? (
-                    <div className="py-8 flex justify-center"><Loader2 className="animate-spin text-slate-300"/></div>
-                 ) : (
-                    <div className="space-y-3">
-                        {displayFund.holdings.length > 0 ? displayFund.holdings.map((stock, idx) => {
-                            const contribution = (stock.percent * stock.changePercent) / 100;
-                            return (
-                                <div key={stock.code} className="relative">
-                                    <div className="flex justify-between items-center text-sm z-10 relative py-1">
-                                        <div className="flex items-center gap-3 w-[45%]">
-                                            <span className={`text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-md ${idx < 3 ? 'bg-orange-100 text-orange-600 dark:bg-orange-900/30' : 'bg-slate-100 text-slate-400 dark:bg-slate-800'}`}>
-                                                {idx + 1}
-                                            </span>
-                                            <div>
-                                                <div className="font-bold text-slate-700 dark:text-slate-200 leading-tight">{stock.name}</div>
-                                                <div className="text-[10px] text-slate-400 font-mono">{stock.code}</div>
-                                            </div>
-                                        </div>
-
-                                        <div className="text-right w-[25%]">
-                                            <div className={`font-bold ${stock.changePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                                                {stock.changePercent > 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
-                                            </div>
-                                        </div>
-
-                                        <div className="text-right w-[30%] pl-2">
-                                            <div className="text-[10px] text-slate-400">权重 {stock.percent}%</div>
-                                            <div className={`text-xs font-bold ${contribution >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                                                贡献 {contribution > 0 ? '+' : ''}{contribution.toFixed(2)}%
-                                            </div>
-                                        </div>
-                                    </div>
-                                    {/* Visual Bar Background */}
-                                    <div className="absolute bottom-0 left-0 h-0.5 bg-slate-100 dark:bg-slate-800 w-full rounded-full overflow-hidden mt-1">
-                                        <div 
-                                            className={`h-full ${contribution >= 0 ? 'bg-up-red' : 'bg-down-green'} opacity-40`} 
-                                            style={{width: `${Math.min(stock.percent * 3, 100)}%`}}
-                                        ></div>
-                                    </div>
-                                </div>
-                            )
-                        }) : (
-                            <div className="text-center text-slate-400 text-xs py-4">暂无持仓数据</div>
-                        )}
-                        <div className="text-[10px] text-slate-400 text-center pt-2">
-                            * 估值仅供参考，基于最新公开的十大重仓股实时计算
-                        </div>
-                    </div>
-                 )}
-              </div>
-          )}
 
           {/* Tabs */}
           <div className="px-4 mb-2">
@@ -361,6 +317,71 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                      </div>
                  )}
              </div>
+          )}
+
+          {/* Holdings Breakdown - Moved Below Tabs */}
+          {activeTab === 'INFO' && (
+              <div className="bg-white dark:bg-slate-900 p-5 mb-3 shadow-sm border-t border-slate-100 dark:border-slate-800 mt-2">
+                 <div className="flex items-center justify-between mb-4">
+                     <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                        <Layers size={18} className="text-indigo-500" />
+                        重仓股贡献拆解
+                     </h3>
+                     <div className="text-[10px] text-slate-400 bg-slate-50 dark:bg-slate-800 px-2 py-1 rounded-lg">
+                        Top10 贡献: <span className={topHoldingsContribution >= 0 ? 'text-up-red' : 'text-down-green'}>{topHoldingsContribution > 0 ? '+' : ''}{topHoldingsContribution.toFixed(2)}%</span>
+                     </div>
+                 </div>
+
+                 {isLoadingDetails ? (
+                    <div className="py-8 flex justify-center"><Loader2 className="animate-spin text-slate-300"/></div>
+                 ) : (
+                    <div className="space-y-3">
+                        {displayFund.holdings.length > 0 ? displayFund.holdings.map((stock, idx) => {
+                            const contribution = (stock.percent * stock.changePercent) / 100;
+                            return (
+                                <div key={stock.code} className="relative">
+                                    <div className="flex justify-between items-center text-sm z-10 relative py-1">
+                                        <div className="flex items-center gap-3 w-[45%]">
+                                            <span className={`text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-md ${idx < 3 ? 'bg-orange-100 text-orange-600 dark:bg-orange-900/30' : 'bg-slate-100 text-slate-400 dark:bg-slate-800'}`}>
+                                                {idx + 1}
+                                            </span>
+                                            <div>
+                                                <div className="font-bold text-slate-700 dark:text-slate-200 leading-tight">{stock.name}</div>
+                                                <div className="text-[10px] text-slate-400 font-mono">{stock.code}</div>
+                                            </div>
+                                        </div>
+
+                                        <div className="text-right w-[25%]">
+                                            <div className={`font-bold ${stock.changePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
+                                                {stock.changePercent > 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
+                                            </div>
+                                        </div>
+
+                                        <div className="text-right w-[30%] pl-2">
+                                            <div className="text-[10px] text-slate-400">权重 {stock.percent}%</div>
+                                            <div className={`text-xs font-bold ${contribution >= 0 ? 'text-up-red' : 'text-down-green'}`}>
+                                                贡献 {contribution > 0 ? '+' : ''}{contribution.toFixed(2)}%
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {/* Visual Bar Background */}
+                                    <div className="absolute bottom-0 left-0 h-0.5 bg-slate-100 dark:bg-slate-800 w-full rounded-full overflow-hidden mt-1">
+                                        <div 
+                                            className={`h-full ${contribution >= 0 ? 'bg-up-red' : 'bg-down-green'} opacity-40`} 
+                                            style={{width: `${Math.min(stock.percent * 3, 100)}%`}}
+                                        ></div>
+                                    </div>
+                                </div>
+                            )
+                        }) : (
+                            <div className="text-center text-slate-400 text-xs py-4">暂无持仓数据</div>
+                        )}
+                        <div className="text-[10px] text-slate-400 text-center pt-2">
+                            * 估值仅供参考，基于最新公开的十大重仓股实时计算
+                        </div>
+                    </div>
+                 )}
+              </div>
           )}
       </div>
 

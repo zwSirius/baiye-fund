@@ -210,6 +210,7 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
         let lastNav = fund.lastNav;
         let lastNavDate = fund.lastNavDate;
         let source = realData.source;
+        let estimateTime = "";
 
         const apiDwjz = parseFloat(realData.dwjz);
         const apiGsz = parseFloat(realData.gsz);
@@ -234,6 +235,14 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
             estimatedChangePercent = 0;
         }
 
+        // 3. 处理估值更新时间
+        if (source === 'official_realtime') {
+            estimateTime = realData.gztime || "";
+        } else if (source === 'holdings_calc_batch') {
+            const now = new Date();
+            estimateTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+        }
+
         if (realData.name && realData.name.length > 0) {
             name = realData.name;
         }
@@ -253,7 +262,8 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
             estimatedNav,
             estimatedChangePercent,
             estimatedProfit: profitToday,
-            source
+            source,
+            estimateTime
         };
     });
 };

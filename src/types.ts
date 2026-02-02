@@ -38,6 +38,7 @@ export interface Fund {
   estimatedNav: number;
   estimatedChangePercent: number;
   estimatedProfit: number; // 今日预估盈亏
+  estimateTime?: string; // 估值更新时间 e.g. "14:30"
   source?: string; // "official" | "holdings_calc"
   
   // User specific
