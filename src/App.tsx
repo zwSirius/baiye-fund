@@ -19,12 +19,19 @@ import { Watchlist } from './components/Watchlist';
 import { MarketConfigModal } from './components/MarketConfigModal';
 
 // Icons
-import { LayoutGrid, PieChart, Settings, Bot, Plus, Moon, Sun, Monitor, Download, Upload, Clipboard, ClipboardPaste, Users, X, Eye, EyeOff, PenTool, Key } from 'lucide-react';
+import { LayoutGrid, PieChart, Settings, Bot, Plus, Moon, Sun, Monitor, Download, Upload, Clipboard, ClipboardPaste, Users, X, Eye, EyeOff, PenTool, Key, BarChart3 } from 'lucide-react';
 
 const NavBtn = ({ icon, label, isActive, onClick }: any) => (
-    <button onClick={onClick} className={`flex flex-col items-center w-14 pb-4 transition ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'}`}>
-        {React.cloneElement(icon, { strokeWidth: isActive ? 2.5 : 2 })}
-        <span className="text-[10px] font-medium mt-1">{label}</span>
+    <button 
+        onClick={onClick} 
+        className={`flex flex-col items-center justify-center w-14 h-full transition duration-300 relative ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 hover:text-slate-600'}`}
+    >
+        <div className={`transition-transform duration-300 ${isActive ? '-translate-y-1' : ''}`}>
+             {React.cloneElement(icon, { strokeWidth: isActive ? 2.5 : 2, size: 24 })}
+        </div>
+        <span className={`text-[10px] font-medium absolute bottom-3 transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-0 translate-y-2'}`}>
+            {label}
+        </span>
     </button>
 );
 
@@ -37,15 +44,12 @@ const App: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<TabView>(TabView.DASHBOARD);
   
-  // UI State
   const [theme, setTheme] = useState<'light' | 'dark' | 'system'>('system');
   const [isPrivacyMode, setIsPrivacyMode] = useState(false);
   const [currentGroupId, setCurrentGroupId] = useState<string>('all'); 
   
-  // Settings State
   const [customApiKey, setCustomApiKey] = useState('');
   
-  // Modal State
   const [isAddModalOpen, setAddModalOpen] = useState(false);
   const [isWatchlistMode, setIsWatchlistMode] = useState(false);
   const [editingFundId, setEditingFundId] = useState<string | null>(null);
@@ -55,22 +59,18 @@ const App: React.FC = () => {
   const [isMarketConfigOpen, setIsMarketConfigOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   
-  // Import State
   const [isImportTextOpen, setIsImportTextOpen] = useState(false);
   const [importTextContent, setImportTextContent] = useState('');
 
-  // Transaction State
   const [txModal, setTxModal] = useState<{ isOpen: boolean, fundId: string | null, type: TransactionType }>({
       isOpen: false, fundId: null, type: 'BUY'
   });
   
-  // AI State
   const [isAIModalOpen, setAIModalOpen] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiReport, setAiReport] = useState("");
   const [currentAnalyzingFund, setCurrentAnalyzingFund] = useState<string>("");
 
-  // Derived Values
   const totals = getTotalAssets();
   const visibleDashboardFunds = getFundsByGroup(currentGroupId);
   const watchlistFunds = funds.filter(f => f.isWatchlist || f.holdingShares === 0);
@@ -79,7 +79,6 @@ const App: React.FC = () => {
   const selectedFund = useMemo(() => funds.find(f => f.id === selectedFundId) || null, [funds, selectedFundId]);
   const txFund = useMemo(() => funds.find(f => f.id === txModal.fundId) || null, [funds, txModal.fundId]);
 
-  // --- Effects ---
   useEffect(() => {
     const root = window.document.documentElement;
     root.classList.remove('light', 'dark');
@@ -99,8 +98,6 @@ const App: React.FC = () => {
     if (storedKey) setCustomApiKey(storedKey);
   }, []);
 
-  // --- Handlers ---
-
   const togglePrivacy = () => {
       const newVal = !isPrivacyMode;
       setIsPrivacyMode(newVal);
@@ -109,12 +106,10 @@ const App: React.FC = () => {
 
   const saveCustomApiKey = () => {
       localStorage.setItem('smartfund_custom_key', customApiKey.trim());
-      // Trigger a storage event so AIChat component can pick up the change if it's open
       window.dispatchEvent(new Event('storage'));
       alert('API Key 已保存');
   };
 
-  // AI
   const handleAnalyze = async (fund: any) => {
     setCurrentAnalyzingFund(fund.name);
     setAIModalOpen(true);
@@ -127,10 +122,9 @@ const App: React.FC = () => {
 
   const goToSettings = () => {
       setActiveTab(TabView.SETTINGS);
-      setAIModalOpen(false); // Close AI modal if open
+      setAIModalOpen(false); 
   };
 
-  // Fund Operations
   const handleConfirmTransaction = (t: Transaction) => {
       if (!txFund) return;
       
@@ -167,7 +161,6 @@ const App: React.FC = () => {
       setTxModal({ ...txModal, isOpen: false });
   };
 
-  // Import/Export
   const handleDownloadBackup = () => {
       const blob = new Blob([exportData()], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -195,25 +188,25 @@ const App: React.FC = () => {
   const sentimentScore = Math.min(100, Math.max(0, 50 + marketAvgChange * 20));
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans pb-20 max-w-md mx-auto shadow-2xl relative overflow-hidden transition-colors">
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans max-w-md mx-auto shadow-2xl relative overflow-hidden transition-colors pb-24">
       {/* Header */}
-      <header className="bg-white dark:bg-slate-900 px-4 pt-10 pb-3 sticky top-0 z-10 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center transition-colors">
+      <header className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md px-5 pt-12 pb-3 sticky top-0 z-20 flex justify-between items-center transition-colors">
         <div className="flex items-center gap-2">
             <div>
                 <h1 className="text-xl font-black text-slate-800 dark:text-white tracking-tight flex items-center gap-1">
                     Smart<span className="text-blue-600">Fund</span>
                 </h1>
-                <p className="text-[10px] text-slate-400 font-medium tracking-wide">AI 驱动的智能养基助手</p>
+                <p className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">AI Wealth Assistant</p>
             </div>
-            <button onClick={togglePrivacy} className="text-slate-400 hover:text-slate-600 ml-2">
+            <button onClick={togglePrivacy} className="text-slate-400 hover:text-slate-600 ml-2 p-1">
                 {isPrivacyMode ? <EyeOff size={16}/> : <Eye size={16}/>}
             </button>
         </div>
         <button 
             onClick={() => { setEditingFundId(null); setIsWatchlistMode(false); setAddModalOpen(true); }}
-            className="bg-blue-600 text-white p-2 rounded-full hover:bg-blue-700 shadow-lg shadow-blue-200 dark:shadow-blue-900/30 transition active:scale-95"
+            className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 p-2.5 rounded-full hover:scale-105 shadow-lg shadow-slate-200 dark:shadow-slate-800 transition active:scale-95"
         >
-           <Plus size={18} />
+           <Plus size={20} />
         </button>
       </header>
 
@@ -251,29 +244,28 @@ const App: React.FC = () => {
         {activeTab === TabView.MARKET && (
             <div className="space-y-6 mt-6 pb-24">
                 <MarketSentiment data={[
-                    { name: '恐慌', value: 30, color: '#22c55e' }, 
-                    { name: '中性', value: 40, color: '#fbbf24' }, 
-                    { name: '贪婪', value: 30, color: '#ef4444' }, 
+                    { name: '恐慌', value: 30, color: '#10b981' }, 
+                    { name: '中性', value: 40, color: '#f59e0b' }, 
+                    { name: '贪婪', value: 30, color: '#f43f5e' }, 
                 ]} score={Math.round(sentimentScore)} />
                 
                 <div className="px-4">
-                     <div className="flex justify-between items-center mb-3">
+                     <div className="flex justify-between items-center mb-4">
                          <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
                              <span>市场核心指数</span>
-                             <span className="text-xs font-normal text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">实时数据</span>
                          </h3>
-                         <button onClick={() => setIsMarketConfigOpen(true)} className="text-xs text-blue-500 font-bold flex items-center gap-1">
+                         <button onClick={() => setIsMarketConfigOpen(true)} className="text-xs text-blue-500 font-bold flex items-center gap-1 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded-md">
                             <Settings size={12} /> 自定义
                          </button>
                      </div>
                      <div className="grid grid-cols-2 gap-3">
                          {sectorIndices.map((sector) => (
-                             <div key={sector.name} className="bg-white dark:bg-slate-900 p-3 rounded-lg shadow-sm border border-slate-100 dark:border-slate-800 flex justify-between items-center">
+                             <div key={sector.name} className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 flex justify-between items-center">
                                  <div>
                                      <div className="text-sm font-bold text-slate-700 dark:text-slate-200">{sector.name}</div>
                                      <div className="text-[10px] text-slate-400 mt-1">热度: {sector.score}</div>
                                  </div>
-                                 <div className={`text-base font-bold ${sector.changePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
+                                 <div className={`text-lg font-black ${sector.changePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
                                      {sector.changePercent > 0 ? '+' : ''}{sector.changePercent}%
                                  </div>
                              </div>
@@ -288,28 +280,25 @@ const App: React.FC = () => {
         {activeTab === TabView.AI_INSIGHTS && <AIChat onGoToSettings={goToSettings} />}
         
         {activeTab === TabView.SETTINGS && (
-            <div className="p-6 pb-24">
-                <h2 className="text-xl font-bold mb-4 dark:text-white">设置</h2>
-                <div className="space-y-4">
+            <div className="p-6 pb-24 animate-fade-in">
+                <h2 className="text-xl font-bold mb-6 dark:text-white">设置</h2>
+                <div className="space-y-6">
                     
-                    {/* Appearance */}
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 p-4 flex justify-between items-center">
-                        <span>外观模式</span>
+                    <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 p-5 flex justify-between items-center">
+                        <span className="font-bold text-sm">外观模式</span>
                         <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
-                            <button onClick={() => setTheme('light')} className={`p-1.5 rounded-md ${theme === 'light' ? 'bg-white shadow text-blue-600' : 'text-slate-400'}`}><Sun size={16} /></button>
-                            <button onClick={() => setTheme('system')} className={`p-1.5 rounded-md ${theme === 'system' ? 'bg-white shadow text-blue-600' : 'text-slate-400'}`}><Monitor size={16} /></button>
-                            <button onClick={() => setTheme('dark')} className={`p-1.5 rounded-md ${theme === 'dark' ? 'bg-white shadow text-blue-600' : 'text-slate-400'}`}><Moon size={16} /></button>
+                            <button onClick={() => setTheme('light')} className={`p-2 rounded-md transition ${theme === 'light' ? 'bg-white shadow text-blue-600' : 'text-slate-400'}`}><Sun size={18} /></button>
+                            <button onClick={() => setTheme('system')} className={`p-2 rounded-md transition ${theme === 'system' ? 'bg-white shadow text-blue-600' : 'text-slate-400'}`}><Monitor size={18} /></button>
+                            <button onClick={() => setTheme('dark')} className={`p-2 rounded-md transition ${theme === 'dark' ? 'bg-white shadow text-blue-600' : 'text-slate-400'}`}><Moon size={18} /></button>
                         </div>
                     </div>
 
-                    {/* AI Configuration */}
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 p-4">
+                    <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 p-5">
                         <div className="flex items-center gap-2 font-bold mb-3 text-slate-800 dark:text-white">
                             <Key size={18} className="text-indigo-500" /> API Key 配置
                         </div>
-                        <div className="text-xs text-slate-500 dark:text-slate-400 mb-2 leading-relaxed">
-                            请填入您的 Google Gemini API Key 以使用智能分析功能。
-                            <br/>Key 仅保存在您的本地浏览器中，请放心使用。
+                        <div className="text-xs text-slate-500 dark:text-slate-400 mb-4 leading-relaxed bg-slate-50 dark:bg-slate-800 p-3 rounded-lg">
+                            配置 Google Gemini API Key 以解锁智能分析功能。Key 仅保存在本地。
                         </div>
                         <div className="flex gap-2">
                             <input 
@@ -317,33 +306,32 @@ const App: React.FC = () => {
                                 value={customApiKey}
                                 onChange={(e) => setCustomApiKey(e.target.value)}
                                 placeholder="sk-..."
-                                className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500"
+                                className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             />
                             <button 
                                 onClick={saveCustomApiKey}
-                                className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-bold active:scale-95 transition"
+                                className="bg-indigo-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold active:scale-95 transition"
                             >
                                 保存
                             </button>
                         </div>
                     </div>
 
-                    {/* Data Management */}
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 p-4">
-                        <div className="font-bold mb-2">数据备份与恢复</div>
+                    <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 p-5">
+                        <div className="font-bold mb-4">数据管理</div>
                         <div className="grid grid-cols-2 gap-3 mb-4">
-                            <button onClick={handleDownloadBackup} className="bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 py-2 rounded-lg text-xs font-bold flex justify-center gap-2"><Download size={14}/> 导出文件</button>
-                            <label className="bg-slate-50 dark:bg-slate-800 border dark:border-slate-700 py-2 rounded-lg text-xs font-bold flex justify-center gap-2 cursor-pointer"><Upload size={14}/> 导入文件 <input type="file" accept=".json" onChange={(e) => { const f = e.target.files?.[0]; if(f) { const r = new FileReader(); r.onload = (ev) => handleImport(ev.target?.result as string); r.readAsText(f); } }} className="hidden" /></label>
+                            <button onClick={handleDownloadBackup} className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-700 transition"><Download size={16}/> 导出备份</button>
+                            <label className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700 transition"><Upload size={16}/> 恢复备份 <input type="file" accept=".json" onChange={(e) => { const f = e.target.files?.[0]; if(f) { const r = new FileReader(); r.onload = (ev) => handleImport(ev.target?.result as string); r.readAsText(f); } }} className="hidden" /></label>
                         </div>
                         <div className="grid grid-cols-2 gap-3">
-                            <button onClick={() => { navigator.clipboard.writeText(exportData()); alert("已复制"); }} className="bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 py-2 rounded-lg text-xs font-bold flex justify-center gap-2"><Clipboard size={14}/> 复制数据</button>
-                            <button onClick={() => setIsImportTextOpen(true)} className="bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 py-2 rounded-lg text-xs font-bold flex justify-center gap-2"><ClipboardPaste size={14}/> 粘贴导入</button>
+                            <button onClick={() => { navigator.clipboard.writeText(exportData()); alert("已复制"); }} className="bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2"><Clipboard size={16}/> 复制数据</button>
+                            <button onClick={() => setIsImportTextOpen(true)} className="bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2"><ClipboardPaste size={16}/> 粘贴导入</button>
                         </div>
                     </div>
 
-                    <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 p-4 flex justify-between items-center">
-                        <span className="text-red-500 font-medium">重置所有数据</span>
-                        <button onClick={() => { if(confirm("确定清空？")) { localStorage.clear(); window.location.reload(); } }} className="text-xs border border-red-200 text-red-500 px-3 py-1 rounded-full">清空</button>
+                    <div className="bg-red-50 dark:bg-red-900/10 rounded-2xl p-5 flex justify-between items-center">
+                        <span className="text-red-500 font-bold text-sm">重置所有数据</span>
+                        <button onClick={() => { if(confirm("确定清空所有本地数据？此操作无法撤销。")) { localStorage.clear(); window.location.reload(); } }} className="text-xs bg-white dark:bg-red-900/30 text-red-500 border border-red-200 dark:border-red-800 px-4 py-2 rounded-full font-bold">清空</button>
                     </div>
                 </div>
             </div>
@@ -351,23 +339,25 @@ const App: React.FC = () => {
       </main>
 
       {/* Nav */}
-      <nav className="fixed bottom-0 w-full bg-white/90 backdrop-blur-md dark:bg-slate-900/90 border-t border-slate-200 dark:border-slate-800 h-[80px] flex justify-between items-end pb-safe pt-2 px-2 z-40 max-w-md">
-        <NavBtn icon={<LayoutGrid size={22}/>} label="资产" isActive={activeTab === TabView.DASHBOARD} onClick={() => setActiveTab(TabView.DASHBOARD)} />
-        <NavBtn icon={<Eye size={22}/>} label="自选" isActive={activeTab === TabView.WATCHLIST} onClick={() => setActiveTab(TabView.WATCHLIST)} />
-        <NavBtn icon={<PieChart size={22}/>} label="市场" isActive={activeTab === TabView.MARKET} onClick={() => setActiveTab(TabView.MARKET)} />
-        <NavBtn icon={<PenTool size={22}/>} label="工具" isActive={activeTab === TabView.TOOLS} onClick={() => setActiveTab(TabView.TOOLS)} />
-        <button onClick={() => setActiveTab(TabView.AI_INSIGHTS)} className="flex flex-col items-center w-14 pb-4">
-             <div className={`p-2 rounded-xl mb-1 ${activeTab === TabView.AI_INSIGHTS ? 'bg-gradient-to-tr from-indigo-500 to-purple-500 text-white -translate-y-2 shadow-lg' : 'text-slate-400'}`}><Bot size={24} /></div>
-             <span className={`text-[10px] ${activeTab === TabView.AI_INSIGHTS ? 'text-indigo-600' : 'text-slate-400'}`}>AI</span>
+      <nav className="fixed bottom-6 left-1/2 transform -translate-x-1/2 w-[90%] max-w-[360px] bg-white/90 backdrop-blur-xl dark:bg-slate-800/90 border border-white/20 dark:border-slate-700 rounded-full h-[64px] flex justify-around items-center px-2 z-40 shadow-2xl shadow-slate-200/50 dark:shadow-black/50">
+        <NavBtn icon={<LayoutGrid />} label="资产" isActive={activeTab === TabView.DASHBOARD} onClick={() => setActiveTab(TabView.DASHBOARD)} />
+        <NavBtn icon={<Eye />} label="自选" isActive={activeTab === TabView.WATCHLIST} onClick={() => setActiveTab(TabView.WATCHLIST)} />
+        <button 
+             onClick={() => setActiveTab(TabView.AI_INSIGHTS)} 
+             className="relative -top-6 bg-gradient-to-br from-indigo-500 to-purple-600 text-white rounded-full p-4 shadow-lg shadow-indigo-500/30 active:scale-95 transition hover:scale-105"
+        >
+             <Bot size={28} />
         </button>
-        <NavBtn icon={<Settings size={22}/>} label="设置" isActive={activeTab === TabView.SETTINGS} onClick={() => setActiveTab(TabView.SETTINGS)} />
+        <NavBtn icon={<BarChart3 />} label="市场" isActive={activeTab === TabView.MARKET} onClick={() => setActiveTab(TabView.MARKET)} />
+        <NavBtn icon={<Settings />} label="设置" isActive={activeTab === TabView.SETTINGS} onClick={() => setActiveTab(TabView.SETTINGS)} />
       </nav>
 
       {/* Import Modal */}
       {isImportTextOpen && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={() => setIsImportTextOpen(false)}>
-            <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-2xl p-6" onClick={e => e.stopPropagation()}>
-                <textarea value={importTextContent} onChange={(e) => setImportTextContent(e.target.value)} placeholder="粘贴 JSON..." className="w-full h-32 p-3 text-xs border rounded-xl mb-4 bg-slate-50 dark:bg-slate-800 dark:text-white" />
+            <div className="bg-white dark:bg-slate-900 w-full max-w-sm rounded-2xl p-6 shadow-2xl animate-scale-in" onClick={e => e.stopPropagation()}>
+                <h3 className="font-bold mb-4">粘贴数据 JSON</h3>
+                <textarea value={importTextContent} onChange={(e) => setImportTextContent(e.target.value)} placeholder="在此粘贴..." className="w-full h-32 p-3 text-xs border rounded-xl mb-4 bg-slate-50 dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none" />
                 <button onClick={() => handleImport(importTextContent)} className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl">导入</button>
             </div>
           </div>
@@ -384,19 +374,19 @@ const App: React.FC = () => {
       
       {isManageGroupsOpen && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={() => setIsManageGroupsOpen(false)}>
-            <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-xs p-6" onClick={e => e.stopPropagation()}>
+            <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-xs p-6 shadow-2xl animate-scale-in" onClick={e => e.stopPropagation()}>
                 <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Users size={20} className="text-blue-600"/> 分组管理</h3>
                 <div className="space-y-3 mb-6 max-h-60 overflow-y-auto">
                     {groups.map(g => (
-                        <div key={g.id} className="flex justify-between items-center bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-100 dark:border-slate-700">
-                            <span className="font-medium dark:text-slate-200">{g.name}</span>
-                            {!g.isDefault && <button onClick={() => removeGroup(g.id)} className="text-slate-400 hover:text-red-500"><X size={18}/></button>}
+                        <div key={g.id} className="flex justify-between items-center bg-slate-50 dark:bg-slate-800 p-3 rounded-xl border border-slate-100 dark:border-slate-700">
+                            <span className="font-medium text-sm dark:text-slate-200">{g.name}</span>
+                            {!g.isDefault && <button onClick={() => removeGroup(g.id)} className="text-slate-400 hover:text-red-500 p-1"><X size={16}/></button>}
                         </div>
                     ))}
                 </div>
                 <div className="flex gap-2">
-                    <input type="text" value={newGroupName} onChange={e => setNewGroupName(e.target.value)} placeholder="新分组名..." className="flex-1 border rounded-lg px-3 py-2 text-sm dark:bg-slate-800" />
-                    <button onClick={() => { if(newGroupName) { addGroup(newGroupName); setNewGroupName(''); }}} className="bg-blue-600 text-white rounded-lg px-4 py-2 font-bold text-sm">添加</button>
+                    <input type="text" value={newGroupName} onChange={e => setNewGroupName(e.target.value)} placeholder="新分组名..." className="flex-1 border rounded-xl px-3 py-2 text-sm dark:bg-slate-800 focus:outline-none focus:border-blue-500" />
+                    <button onClick={() => { if(newGroupName) { addGroup(newGroupName); setNewGroupName(''); }}} className="bg-blue-600 text-white rounded-xl px-4 py-2 font-bold text-sm">添加</button>
                 </div>
             </div>
           </div>
