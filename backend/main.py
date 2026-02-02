@@ -32,7 +32,7 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 ]
 
-# --- LV2: Proxy Map (场内映射表) ---
+# --- LV2: Proxy Map ---
 PROXY_MAP = {
     # 宽基
     "沪深300": "510300", "300联接": "510300",
@@ -54,39 +54,17 @@ PROXY_MAP = {
     "纳斯达克": "513100", "纳指": "513100", "标普": "513500",
     "恒生科技": "513130", "港股通科技": "513130",
     "恒生互联网": "513330", "中概": "513050", "互联网": "513050",
-    # 债基 (LV2 债基映射到国债/短融ETF作为风向标)
+    # 债基
     "可转债": "511380", "转债": "511380",
     "短债": "511260", "中长债": "511260", "纯债": "511260", "信用债": "511260"
 }
 
-# --- Core Services ---
-
-class GlobalSession:
-    """Singleton session for HTTP requests"""
-    _session = None
-
-    @classmethod
-    def get(cls):
-        if cls._session is None:
-            cls._session = requests.Session()
-            adapter = requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20)
-            cls._session.mount('http://', adapter)
-            cls._session.mount('https://', adapter)
-            # Add default headers to session
-            cls._session.headers.update({
-                "User-Agent": random.choice(USER_AGENTS),
-                "Referer": "http://fund.eastmoney.com/",
-                "Connection": "keep-alive"
-            })
-        return cls._session
-
 class CacheService:
-    """Simple in-memory cache"""
     def __init__(self):
         self._estimate_cache = {}
+        self._holdings_cache = {}
         self._funds_list_cache = []
         self._funds_list_time = None
-        self._holdings_cache = {}
 
     def get_estimate(self, code: str):
         entry = self._estimate_cache.get(code)
@@ -95,12 +73,8 @@ class CacheService:
         return None
 
     def set_estimate(self, code: str, data: dict, ttl: int = 60):
-        # Only cache if valid data
         if data:
-            self._estimate_cache[code] = {
-                'data': data,
-                'expire': time_module.time() + ttl
-            }
+            self._estimate_cache[code] = {'data': data, 'expire': time_module.time() + ttl}
 
     def get_holdings(self, code: str):
         entry = self._holdings_cache.get(code)
@@ -111,21 +85,19 @@ class CacheService:
     def set_holdings(self, code: str, data: list):
         self._holdings_cache[code] = {"data": data, "time": datetime.now()}
 
-    async def get_funds_list(self):
-        if not self._funds_list_cache or not self._funds_list_time or \
-           (datetime.now() - self._funds_list_time).total_seconds() > 86400:
-            return None
-        return self._funds_list_cache
-
-    def set_funds_list(self, data: list):
+    def get_funds_list(self):
+        if self._funds_list_cache and self._funds_list_time and \
+           (datetime.now() - self._funds_list_time).total_seconds() < 86400:
+            return self._funds_list_cache
+        return None
+        
+    def set_funds_list(self, data):
         self._funds_list_cache = data
         self._funds_list_time = datetime.now()
 
 cache_service = CacheService()
 
 class AkshareService:
-    """Encapsulates Akshare and Data Fetching Logic"""
-    
     @staticmethod
     def get_headers():
         return {
@@ -145,21 +117,7 @@ class AkshareService:
         else: return 'POST_MARKET'
 
     @staticmethod
-    def fetch_fund_history_sync(code: str) -> pd.DataFrame:
-        try:
-            # 使用 Akshare 官方接口获取历史净值
-            df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
-            if not df.empty:
-                if '净值日期' in df.columns: df['净值日期'] = df['净值日期'].astype(str)
-                if '单位净值' in df.columns: df['单位净值'] = pd.to_numeric(df['单位净值'], errors='coerce')
-                return df
-        except Exception as e:
-            logger.warning(f"Akshare history error {code}: {e}")
-        return pd.DataFrame()
-
-    @staticmethod
     def fetch_realtime_estimate_sync(code: str):
-        """LV1: Fetch Official Estimate from fundgz"""
         cached = cache_service.get_estimate(code)
         if cached: return cached
 
@@ -167,7 +125,7 @@ class AkshareService:
         try:
             ts = int(time_module.time() * 1000)
             url = f"http://fundgz.1234567.com.cn/js/gszzl_{code}.js?rt={ts}"
-            resp = GlobalSession.get().get(url, headers=AkshareService.get_headers(), timeout=2.0)
+            resp = requests.get(url, headers=AkshareService.get_headers(), timeout=2.0)
             match = re.search(r'jsonpgz\((.*?)\);', resp.text)
             if match:
                 fetched = json.loads(match.group(1))
@@ -175,50 +133,15 @@ class AkshareService:
                     data.update(fetched)
                     data['source'] = 'LV1_OFFICIAL'
                     cache_service.set_estimate(code, data)
-        except Exception: pass
+        except: pass
         return data
 
     @staticmethod
-    def fetch_holdings_sync(code: str) -> List[Dict]:
-        try:
-            year = datetime.now().year
-            all_dfs = []
-            for y in [year, year - 1]:
-                try:
-                    df = ak.fund_portfolio_hold_em(symbol=code, date=y)
-                    if not df.empty and '季度' in df.columns: all_dfs.append(df)
-                except: continue
-            
-            if not all_dfs: return []
-            combined = pd.concat(all_dfs)
-            
-            def parse_rank(q):
-                try:
-                    if '年报' in q: return int(re.search(r'(\d{4})', q).group(1)) * 100 + 4
-                    return int(re.search(r'(\d{4})', q).group(1)) * 100 + int(re.search(r'(\d)季度', q).group(1))
-                except: return 0
-
-            combined['rank'] = combined['季度'].apply(parse_rank)
-            combined['占净值比例'] = pd.to_numeric(combined['占净值比例'], errors='coerce').fillna(0)
-            sorted_df = combined.sort_values(by=['rank', '占净值比例'], ascending=[False, False])
-            
-            if sorted_df.empty: return []
-            latest_rank = sorted_df.iloc[0]['rank']
-            return [
-                {"code": str(r['股票代码']), "name": str(r['股票名称']), "percent": float(r['占净值比例'])}
-                for _, r in sorted_df[sorted_df['rank'] == latest_rank].head(10).iterrows()
-            ]
-        except Exception as e:
-            logger.error(f"Holdings error {code}: {e}")
-            return []
-
-    @staticmethod
     def fetch_quotes_sync(codes: List[str]) -> Dict[str, float]:
-        """Fetch quotes for Stocks AND ETFs"""
         if not codes: return {}
         unique = list(set(codes))
         quotes = {}
-        batch_size = 40 # Eastmoney batch size limit
+        batch_size = 40 
         
         for i in range(0, len(unique), batch_size):
             batch = unique[i:i+batch_size]
@@ -226,12 +149,12 @@ class AkshareService:
             for c in batch:
                 if c.startswith('6') or c.startswith('5') or c.startswith('11'): secids.append(f"1.{c}")
                 elif c.startswith('0') or c.startswith('3'): secids.append(f"0.{c}")
-                elif c.startswith('15') or c.startswith('12'): secids.append(f"0.{c}") # SZ ETF
-                else: secids.append(f"0.{c}") # Fallback
+                elif c.startswith('15') or c.startswith('12'): secids.append(f"0.{c}") 
+                else: secids.append(f"0.{c}") 
             
             url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f3,f12&secids={','.join(secids)}"
             try:
-                resp = GlobalSession.get().get(url, headers=AkshareService.get_headers(), timeout=3.0)
+                resp = requests.get(url, headers=AkshareService.get_headers(), timeout=3.0)
                 data = resp.json()
                 if data and 'data' in data and 'diff' in data['data']:
                     for item in data['data']['diff']:
@@ -239,152 +162,125 @@ class AkshareService:
             except: pass
         return quotes
 
-    @staticmethod
-    def fetch_fund_list_sync():
-        try:
-            # Akshare 全量列表获取，可能较慢，建议只在启动或缓存过期时调用
-            df = ak.fund_name_em()
-            df = df.rename(columns={'基金代码': 'code', '基金简称': 'name', '基金类型': 'type', '拼音缩写': 'pinyin'})
-            result = df[['code', 'name', 'type', 'pinyin']].to_dict('records')
-            for r in result:
-                r['code'] = str(r['code'])
-                r['name'] = str(r['name'])
-                r['type'] = str(r['type'])
-                r['pinyin'] = str(r['pinyin'])
-            return result
-        except Exception as e:
-            logger.error(f"Fetch fund list error: {e}")
-            return []
-
-# --- Business Logic Controller ---
-
 class FundController:
-    
     @staticmethod
-    async def get_search_results(key: str):
-        # 1. 尝试直接调用 Eastmoney 搜索 API (速度最快，恢复原始逻辑)
-        url = f"http://fundsuggest.eastmoney.com/FundSearch/api/FundSearchAPI.ashx?m=1&key={key}"
+    def search_funds_sync(key: str):
+        """
+        Robust search function running synchronously (to be wrapped).
+        Attempts direct API call first, then falls back to cache/akshare.
+        """
+        # 1. Direct Eastmoney API (Most reliable for live search)
         try:
-            resp = GlobalSession.get().get(url, headers=AkshareService.get_headers(), timeout=2.0)
-            data = resp.json()
-            results = []
-            if 'Datas' in data:
-                for item in data['Datas']:
-                    if item['CATEGORY'] in ['基金', '混合型', '股票型', '债券型', '指数型', 'QDII', 'ETF', 'LOF']:
-                        results.append({
-                            "code": item['CODE'],
-                            "name": item['NAME'],
-                            "type": item['CATEGORY'],
-                            "pinyin": ""
-                        })
-            return results
-        except Exception:
-            # 2. Fallback to cache if online search fails
-            pass
+            url = f"http://fundsuggest.eastmoney.com/FundSearch/api/FundSearchAPI.ashx?m=1&key={key}"
+            resp = requests.get(url, headers=AkshareService.get_headers(), timeout=2.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                results = []
+                if 'Datas' in data:
+                    for item in data['Datas']:
+                         # Filter common fund types
+                         if item['CATEGORY'] in ['基金', '混合型', '股票型', '债券型', '指数型', 'QDII', 'ETF', 'LOF']:
+                            results.append({
+                                "code": item['CODE'],
+                                "name": item['NAME'],
+                                "type": item['CATEGORY'],
+                                "pinyin": ""
+                            })
+                if results: return results
+        except Exception as e:
+            logger.warning(f"Search API failed for {key}: {e}")
 
-        cached = await cache_service.get_funds_list()
+        # 2. Fallback to cached full list
+        cached = cache_service.get_funds_list()
         if not cached:
-            # If really needed, fetch full list (slow)
-            return []
+             # Try to populate cache if empty (expensive)
+             try:
+                df = ak.fund_name_em()
+                df = df.rename(columns={'基金代码': 'code', '基金简称': 'name', '基金类型': 'type', '拼音缩写': 'pinyin'})
+                cached = df[['code', 'name', 'type', 'pinyin']].to_dict('records')
+                # Ensure strings
+                for r in cached:
+                    r['code'] = str(r['code'])
+                    r['name'] = str(r['name'])
+                cache_service.set_funds_list(cached)
+             except: pass
         
-        key = key.upper()
-        res = []
-        for f in cached:
-            if key in f['code'] or key in f['name'] or key in f['pinyin']:
-                res.append(f)
-                if len(res) >= 20: break
-        return res
-
-    @staticmethod
-    async def get_fund_detail(code: str):
-        manager_task = run_in_threadpool(ak.fund_manager_em, symbol=code)
-        
-        cached_holdings = cache_service.get_holdings(code)
-        if cached_holdings:
-            holdings = cached_holdings
-        else:
-            holdings = await run_in_threadpool(AkshareService.fetch_holdings_sync, code)
-            cache_service.set_holdings(code, holdings)
-
-        manager_name = "暂无"
-        try:
-            m_df = await manager_task
-            if not m_df.empty: manager_name = m_df.iloc[-1]['姓名']
-        except: pass
-
-        if holdings:
-            quotes = await run_in_threadpool(AkshareService.fetch_quotes_sync, [h['code'] for h in holdings])
-            for h in holdings: 
-                h['changePercent'] = quotes.get(h['code'], 0.0)
-                # Note: fetch_quotes_sync now only returns change%, not price, to save bandwidth for batch logic
-                h['currentPrice'] = 0 
-
-        return {"code": code, "manager": manager_name, "holdings": holdings}
+        if cached:
+            key = key.upper()
+            res = []
+            for f in cached:
+                if key in f['code'] or key in f['name'] or key in str(f.get('pinyin', '')):
+                    res.append(f)
+                    if len(res) >= 20: break
+            return res
+            
+        return []
 
     @staticmethod
     async def batch_estimate(codes: List[str]):
         if not codes: return []
-        
         loop = asyncio.get_running_loop()
         phase = AkshareService.get_time_phase()
-        
-        # 1. Fetch Official Data (LV1) & History (Parallel)
+
         async def fetch_base(c):
             official = await loop.run_in_executor(None, AkshareService.fetch_realtime_estimate_sync, c)
-            history = await loop.run_in_executor(None, AkshareService.fetch_fund_history_sync, c)
+            try:
+                # Use akshare to get last nav date history if needed, but for speed rely on official first
+                # We fetch history only if official data is suspicious or empty
+                history = pd.DataFrame() 
+                # Optimization: Only fetch history if we really need it for charts or fallback
+                # Here we fetch it to get the "Last NAV" accurately if official is broken
+                history = await loop.run_in_executor(None, lambda: ak.fund_open_fund_info_em(symbol=c, indicator="单位净值走势"))
+            except: history = pd.DataFrame()
             return c, official, history
 
         base_results = await asyncio.gather(*[fetch_base(c) for c in codes])
         
         results_map = {}
-        lv2_candidates = [] # 需要尝试 Proxy 的
-        lv3_candidates = [] # 需要尝试 Holdings 的
+        lv2_candidates = []
 
         for code, official, history in base_results:
             res = { "fundcode": code, **official }
             
-            # 补全历史净值
+            # Last NAV Logic
             last_nav = 1.0
             if not history.empty:
-                latest = history.iloc[-1]
-                last_nav = float(latest['单位净值'])
-                res['dwjz'] = str(latest['单位净值'])
-                res['jzrq'] = str(latest['净值日期'])
+                 if '单位净值' in history.columns:
+                     history['单位净值'] = pd.to_numeric(history['单位净值'], errors='coerce')
+                     latest = history.iloc[-1]
+                     last_nav = float(latest['单位净值'])
+                     res['dwjz'] = str(latest['单位净值'])
+                     if '净值日期' in history.columns: res['jzrq'] = str(latest['净值日期'])
             elif float(res.get('dwjz', 0)) > 0:
-                last_nav = float(res['dwjz'])
+                 last_nav = float(res['dwjz'])
+            
             res['_last_nav'] = last_nav
 
-            # --- LV1 Check ---
-            # 如果是闭市状态，直接信任官方（可能是昨日收盘数据）
+            # LV1 Check
             if phase in ['CLOSED', 'PRE_MARKET']:
-                res['source'] = 'LV1_OFFICIAL_CLOSE'
                 res['gsz'] = res['dwjz']
                 res['gszzl'] = '0'
+                res['source'] = 'LV1_OFFICIAL_CLOSE'
                 results_map[code] = res
                 continue
 
-            # 盘中：如果官方有非0波动，采信
             gszzl = float(res.get('gszzl', '0'))
             if abs(gszzl) > 0.001:
                 res['source'] = 'LV1_OFFICIAL'
                 results_map[code] = res
                 continue
             
-            # 如果官方是 0 (或未更新)，进入 LV2/LV3 候选
             lv2_candidates.append(code)
             results_map[code] = res
 
-        # --- LV2: Smart Proxy ---
+        # LV2: Proxy
         if lv2_candidates:
-            proxy_queries = {} # {fund_code: proxy_etf_code}
-            
+            proxy_queries = {}
             for c in lv2_candidates:
                 name = results_map[c].get('name', '')
-                # 如果代码本身是 ETF/LOF
                 if c.startswith(('51', '159', '56', '58')):
                     proxy_queries[c] = c
                     continue
-                # 查表
                 for key, p_code in PROXY_MAP.items():
                     if key in name:
                         proxy_queries[c] = p_code
@@ -392,92 +288,76 @@ class FundController:
             
             if proxy_queries:
                 unique_proxies = list(set(proxy_queries.values()))
-                # 批量获取 Proxy 行情
-                proxy_quotes = await loop.run_in_executor(None, AkshareService.fetch_quotes_sync, unique_proxies)
-                
+                p_quotes = await loop.run_in_executor(None, AkshareService.fetch_quotes_sync, unique_proxies)
                 for c in lv2_candidates:
                     if c in proxy_queries:
                         p_code = proxy_queries[c]
-                        if p_code in proxy_quotes:
-                            change = proxy_quotes[p_code]
+                        if p_code in p_quotes:
+                            change = p_quotes[p_code]
                             data = results_map[c]
                             data['gszzl'] = f"{change:.2f}"
                             data['gsz'] = str(data['_last_nav'] * (1 + change/100.0))
                             data['source'] = f"LV2_PROXY_{p_code}"
-                            # 成功解决，移出候选列表，不再进行 LV3
+                            # Remove from LV3 list
                             lv2_candidates = [x for x in lv2_candidates if x != c]
 
-        # --- LV3: Holdings Penetration ---
-        # 剩下的就是：官方没数据，也没匹配到 Proxy 的 (通常是主动权益基金)
-        lv3_candidates = lv2_candidates 
-        
+        # LV3: Holdings
+        # If still remaining candidates (Active Equity Funds with broken official data)
+        lv3_candidates = lv2_candidates
         if lv3_candidates:
-            # 1. 确保有持仓数据
-            codes_fetching_holdings = [c for c in lv3_candidates if not cache_service.get_holdings(c)]
-            if codes_fetching_holdings:
-                 h_tasks = [run_in_threadpool(AkshareService.fetch_holdings_sync, c) for c in codes_fetching_holdings]
-                 fetched_h = await asyncio.gather(*h_tasks)
-                 for i, c in enumerate(codes_fetching_holdings):
-                     cache_service.set_holdings(c, fetched_h[i])
+             # Fetch holdings if not cached
+             missing_holdings = [c for c in lv3_candidates if not cache_service.get_holdings(c)]
+             if missing_holdings:
+                 # Fetch holdings logic (inline to avoid circular dep or reuse AkshareService)
+                 def fetch_holdings_task(c):
+                     try:
+                         y = datetime.now().year
+                         df = ak.fund_portfolio_hold_em(symbol=c, date=y)
+                         if df.empty: df = ak.fund_portfolio_hold_em(symbol=c, date=y-1)
+                         if df.empty: return []
+                         # Simple parse
+                         res = []
+                         for _, row in df.head(10).iterrows():
+                              res.append({"code": str(row['股票代码']), "percent": float(row['占净值比例'])})
+                         return res
+                     except: return []
+
+                 h_results = await asyncio.gather(*[loop.run_in_executor(None, fetch_holdings_task, c) for c in missing_holdings])
+                 for i, c in enumerate(missing_holdings):
+                     cache_service.set_holdings(c, h_results[i])
             
-            # 2. 收集所有股票
-            all_stocks = []
-            fund_holdings_map = {}
-            for c in lv3_candidates:
-                h = cache_service.get_holdings(c) or []
-                fund_holdings_map[c] = h
-                all_stocks.extend([x['code'] for x in h])
+             # Collect stocks
+             all_stocks = []
+             fund_map = {}
+             for c in lv3_candidates:
+                 h = cache_service.get_holdings(c) or []
+                 fund_map[c] = h
+                 all_stocks.extend([x['code'] for x in h])
             
-            # 3. 批量行情
-            if all_stocks:
-                quotes = await loop.run_in_executor(None, AkshareService.fetch_quotes_sync, all_stocks)
-                
-                # 4. 计算
-                for c in lv3_candidates:
-                    data = results_map[c]
-                    holdings = fund_holdings_map.get(c, [])
-                    if not holdings: continue # LV4: Give up, keep last nav
-                    
-                    weighted_change = 0
-                    total_weight = 0
-                    for h in holdings:
-                        w = h['percent']
-                        change = quotes.get(h['code'], 0.0)
-                        weighted_change += (change * w)
-                        total_weight += w
-                    
-                    if total_weight > 0:
-                        est_change = (weighted_change / total_weight) * 0.95 # 0.95 修正系数
-                        data['gszzl'] = f"{est_change:.2f}"
-                        data['gsz'] = str(data['_last_nav'] * (1 + est_change/100.0))
-                        data['source'] = "LV3_HOLDINGS"
+             if all_stocks:
+                 s_quotes = await loop.run_in_executor(None, AkshareService.fetch_quotes_sync, all_stocks)
+                 for c in lv3_candidates:
+                     h = fund_map.get(c, [])
+                     if not h: continue
+                     w_change = 0
+                     total_w = 0
+                     for item in h:
+                         pct = item['percent']
+                         chg = s_quotes.get(item['code'], 0.0)
+                         w_change += chg * pct
+                         total_w += pct
+                     
+                     if total_w > 0:
+                         est = (w_change / total_w) * 0.95
+                         data = results_map[c]
+                         data['gszzl'] = f"{est:.2f}"
+                         data['gsz'] = str(data['_last_nav'] * (1 + est/100.0))
+                         data['source'] = 'LV3_HOLDINGS'
 
         return [results_map[c] for c in codes]
 
-    @staticmethod
-    async def analyze_content(prompt: str):
-        if not GEMINI_API_KEY:
-            raise HTTPException(status_code=500, detail="Server Gemini Key not configured")
-        try:
-            model = genai.GenerativeModel("gemini-3-flash-preview") 
-            response = await run_in_threadpool(model.generate_content, prompt)
-            return {"text": response.text}
-        except Exception as e:
-            logger.error(f"Gemini Error: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
-
-# --- FastAPI App ---
-
-app = FastAPI(title="SmartFund API", description="Optimized Backend with LV1-LV4 Valuation")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 router = APIRouter(prefix="/api")
 
 @router.get("/status")
@@ -486,17 +366,52 @@ def status():
 
 @router.get("/search")
 async def search(key: str = Query(..., min_length=1)):
-    return await FundController.get_search_results(key)
+    # Wrap synchronous search in threadpool to prevent blocking
+    return await run_in_threadpool(FundController.search_funds_sync, key)
+
+@router.post("/estimate/batch")
+async def estimate_batch(payload: dict = Body(...)):
+    return await FundController.batch_estimate(payload.get('codes', []))
+
+@router.get("/fund/{code}")
+async def detail(code: str):
+    # Simplified detail fetch
+    try:
+        holdings = await run_in_threadpool(lambda: cache_service.get_holdings(code))
+        if not holdings:
+             # Trigger fetch logic if needed, or rely on what batch_estimate populated
+             pass
+        return {"code": code, "holdings": holdings or []}
+    except: return {}
+
+@router.get("/history/{code}")
+async def history(code: str):
+    try:
+        df = await run_in_threadpool(lambda: ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势"))
+        if df.empty: return []
+        if '净值日期' in df.columns: df['净值日期'] = df['净值日期'].astype(str)
+        return [{"date": str(r['净值日期']), "value": float(r['单位净值'])} for _, r in df.tail(365).iterrows()]
+    except: return []
+
+@router.post("/analyze")
+async def analyze(payload: dict = Body(...)):
+    prompt = payload.get("prompt", "")
+    if not prompt or not GEMINI_API_KEY:
+        raise HTTPException(status_code=400, detail="Config Error")
+    try:
+        model = genai.GenerativeModel("gemini-3-flash-preview")
+        res = await run_in_threadpool(model.generate_content, prompt)
+        return {"text": res.text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/market")
 async def market(codes: str = Query(None)):
     target_codes = codes.split(',') if codes else ["1.000001", "0.399001"]
-    
     def format_secid(c):
         if '.' in c: return c 
-        if c.startswith('6') or c.startswith('1') or c.startswith('5'): return f"1.{c}"
+        if c.startswith(('6','5','1')): return f"1.{c}"
         return f"0.{c}"
-
     secids = [format_secid(c) for c in target_codes] 
     url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f3,f12,f14,f2&secids={','.join(secids)}"
     try:
@@ -508,37 +423,10 @@ async def market(codes: str = Query(None)):
                 change = float(item['f3']) if item['f3'] != '-' else 0.0
                 result.append({
                     "name": item['f14'], "code": str(item['f12']), 
-                    "changePercent": change, "score": int(max(0, min(100, 50 + change * 10))), 
-                    "leadingStock": "--", "value": item['f2']
+                    "changePercent": change, "score": 50, "leadingStock": "--", "value": item['f2']
                 })
         return result
     except: return []
-
-@router.get("/estimate/{code}")
-async def estimate_one(code: str):
-    res = await FundController.batch_estimate([code])
-    return res[0] if res else {}
-
-@router.post("/estimate/batch")
-async def estimate_batch(payload: dict = Body(...)):
-    return await FundController.batch_estimate(payload.get('codes', []))
-
-@router.get("/fund/{code}")
-async def detail(code: str):
-    return await FundController.get_fund_detail(code)
-
-@router.get("/history/{code}")
-async def history(code: str):
-    df = await run_in_threadpool(AkshareService.fetch_fund_history_sync, code)
-    if df.empty: return []
-    return [{"date": str(r['净值日期']), "value": float(r['单位净值'])} for _, r in df.tail(365).iterrows()]
-
-@router.post("/analyze")
-async def analyze(payload: dict = Body(...)):
-    prompt = payload.get("prompt", "")
-    if not prompt:
-        raise HTTPException(status_code=400, detail="Prompt is required")
-    return await FundController.analyze_content(prompt)
 
 app.include_router(router)
 

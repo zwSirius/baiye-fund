@@ -20,7 +20,7 @@ import { Watchlist } from './components/Watchlist';
 import { MarketConfigModal } from './components/MarketConfigModal';
 
 // Icons
-import { LayoutGrid, PieChart, Settings, Bot, Plus, Moon, Sun, Monitor, Download, Upload, Users, X, Eye, EyeOff, Key } from 'lucide-react';
+import { LayoutGrid, PieChart, Settings, Bot, Plus, Moon, Sun, Monitor, Download, Upload, Users, X, Eye, EyeOff, Key, Copy, Clipboard } from 'lucide-react';
 
 const NavBtn = ({ icon, label, isActive, onClick }: any) => (
     <button onClick={onClick} className="flex flex-col items-center flex-1 pb-4 pt-2 transition select-none active:scale-90" style={{ color: isActive ? 'var(--tw-text-opacity)' : 'rgb(148, 163, 184)' }}>
@@ -61,10 +61,7 @@ const App: React.FC = () => {
   const [aiReport, setAiReport] = useState("");
   const [currentAnalyzingFund, setCurrentAnalyzingFund] = useState<string>("");
 
-  // --- BUG FIX: 分组资产显示逻辑修正 ---
   const totals = useMemo(() => {
-      // 如果 currentGroupId 是 'all'，则统计所有持有份额 > 0 的基金
-      // 如果是特定 ID，则只统计该分组下持有份额 > 0 的基金
       const targetFunds = currentGroupId === 'all' 
           ? funds.filter(f => !f.isWatchlist && f.holdingShares > 0)
           : funds.filter(f => !f.isWatchlist && f.holdingShares > 0 && f.groupId === currentGroupId);
@@ -114,6 +111,39 @@ const App: React.FC = () => {
   const saveCustomApiKey = () => {
       localStorage.setItem('smartfund_custom_key', customApiKey.trim());
       alert('API Key 已保存');
+  };
+
+  const handleExport = () => {
+      const data = exportData();
+      navigator.clipboard.writeText(data).then(() => {
+          alert('配置数据已复制到剪贴板，请粘贴保存到安全的地方。');
+      }).catch(() => {
+          alert('复制失败，请手动复制。');
+      });
+  };
+
+  const handleImport = async () => {
+      try {
+          const text = await navigator.clipboard.readText();
+          if (text) {
+              if (importData(text)) {
+                  alert('数据导入成功，页面将刷新');
+                  window.location.reload();
+              } else {
+                  alert('数据格式错误，请检查复制的内容');
+              }
+          } else {
+             const manual = prompt('请粘贴备份数据 (JSON格式):');
+             if (manual && importData(manual)) {
+                 window.location.reload();
+             }
+          }
+      } catch (e) {
+          const manual = prompt('请粘贴备份数据 (JSON格式):');
+          if (manual && importData(manual)) {
+              window.location.reload();
+          }
+      }
   };
 
   const handleAnalyze = async (fund: any) => {
@@ -214,11 +244,16 @@ const App: React.FC = () => {
                     <button onClick={saveCustomApiKey} className="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-bold active:scale-95 transition">保存</button>
                 </div>
                 <div className="bg-white dark:bg-slate-900 rounded-xl p-4 shadow-sm">
-                    <div className="font-bold mb-3">备份恢复</div>
+                    <div className="font-bold mb-3">数据备份</div>
                     <div className="grid grid-cols-2 gap-3">
-                        <button onClick={() => { const blob = new Blob([exportData()], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'smartfund_backup.json'; a.click(); }} className="bg-slate-50 dark:bg-slate-800 py-2 rounded-lg text-xs font-bold flex justify-center items-center gap-2 border dark:border-slate-700"><Download size={14}/> 导出</button>
-                        <label className="bg-slate-50 dark:bg-slate-800 py-2 rounded-lg text-xs font-bold flex justify-center items-center gap-2 border dark:border-slate-700 cursor-pointer"><Upload size={14}/> 导入<input type="file" accept=".json" onChange={(e) => { const f = e.target.files?.[0]; if(f) { const r = new FileReader(); r.onload = (ev) => { if(importData(ev.target?.result as string)) window.location.reload(); }; r.readAsText(f); } }} className="hidden" /></label>
+                        <button onClick={handleExport} className="bg-slate-50 dark:bg-slate-800 py-3 rounded-lg text-xs font-bold flex justify-center items-center gap-2 border dark:border-slate-700 active:bg-slate-200 dark:active:bg-slate-700 transition">
+                            <Copy size={14}/> 复制配置
+                        </button>
+                        <button onClick={handleImport} className="bg-slate-50 dark:bg-slate-800 py-3 rounded-lg text-xs font-bold flex justify-center items-center gap-2 border dark:border-slate-700 active:bg-slate-200 dark:active:bg-slate-700 transition">
+                            <Clipboard size={14}/> 粘贴导入
+                        </button>
                     </div>
+                    <p className="text-[10px] text-slate-400 mt-2 text-center">所有数据仅保存在本地浏览器中，请定期备份。</p>
                 </div>
             </div>
         )}
@@ -227,12 +262,9 @@ const App: React.FC = () => {
       <nav className="fixed bottom-0 w-full bg-white/95 backdrop-blur-lg dark:bg-slate-900/95 border-t border-slate-200 dark:border-slate-800 flex justify-between items-center pb-safe z-40 max-w-md">
         <NavBtn icon={<LayoutGrid size={22}/>} label="资产" isActive={activeTab === TabView.DASHBOARD} onClick={() => setActiveTab(TabView.DASHBOARD)} />
         <NavBtn icon={<Eye size={22}/>} label="自选" isActive={activeTab === TabView.WATCHLIST} onClick={() => setActiveTab(TabView.WATCHLIST)} />
-        <div className="flex flex-col items-center flex-1 -mt-4">
-             <button onClick={() => setActiveTab(TabView.AI_INSIGHTS)} className={`p-3 rounded-full mb-1 transition-all ${activeTab === TabView.AI_INSIGHTS ? 'bg-gradient-to-tr from-indigo-500 to-purple-500 text-white shadow-xl scale-110 -translate-y-2' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}><Bot size={24} /></button>
-             <span className={`text-[10px] font-bold ${activeTab === TabView.AI_INSIGHTS ? 'text-indigo-600' : 'text-slate-400'}`}>AI助手</span>
-        </div>
         <NavBtn icon={<PieChart size={22}/>} label="市场" isActive={activeTab === TabView.MARKET} onClick={() => setActiveTab(TabView.MARKET)} />
-        <NavBtn icon={<Settings size={22}/>} label="更多" isActive={activeTab === TabView.SETTINGS || activeTab === TabView.TOOLS} onClick={() => setActiveTab(TabView.SETTINGS)} />
+        <NavBtn icon={<Bot size={22}/>} label="AI助手" isActive={activeTab === TabView.AI_INSIGHTS} onClick={() => setActiveTab(TabView.AI_INSIGHTS)} />
+        <NavBtn icon={<Settings size={22}/>} label="设置" isActive={activeTab === TabView.SETTINGS || activeTab === TabView.TOOLS} onClick={() => setActiveTab(TabView.SETTINGS)} />
       </nav>
 
       <AIModal isOpen={isAIModalOpen} onClose={() => setAIModalOpen(false)} fundName={currentAnalyzingFund} report={aiReport} isLoading={aiLoading} onGoToSettings={() => setActiveTab(TabView.SETTINGS)} />
