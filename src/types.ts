@@ -34,6 +34,7 @@ export interface Fund {
   holdings: Stock[]; // 十大重仓
   tags: string[]; // e.g. "科技", "白酒"
   type?: string; // e.g. "混合型", "指数型"
+  start_date?: string; // 成立日期
   
   // Real-time calculated fields
   estimatedNav: number;

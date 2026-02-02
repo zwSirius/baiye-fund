@@ -26,17 +26,10 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# --- 常量 ---
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0"
-]
-
-# --- 核心服务 ---
+# --- 工具类 ---
 
 class GlobalSession:
-    """全局 HTTP 会话"""
+    """全局 HTTP 会话，复用连接池"""
     _session = None
 
     @classmethod
@@ -49,35 +42,59 @@ class GlobalSession:
         return cls._session
 
 class CacheService:
-    """内存缓存服务"""
-    def __init__(self):
-        self._cache = {}
+    """
+    内存缓存服务
+    改进：支持单例模式，确保多用户共享同一份数据
+    """
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(CacheService, cls).__new__(cls)
+            cls._instance._cache = {}
+        return cls._instance
 
     def get(self, key: str, ttl: int = 60):
         entry = self._cache.get(key)
-        if entry and (time_module.time() - entry['time'] < ttl):
-            return entry['data']
+        if entry:
+            # 检查是否过期
+            if time_module.time() - entry['time'] < ttl:
+                return entry['data']
+            else:
+                # 过期删除，节省内存
+                del self._cache[key]
         return None
 
     def set(self, key: str, data: any):
         self._cache[key] = {"data": data, "time": time_module.time()}
+    
+    def mget(self, keys: List[str], ttl: int = 60) -> Dict[str, Any]:
+        """批量获取，返回 {key: data}，未命中的不返回"""
+        result = {}
+        for k in keys:
+            val = self.get(k, ttl)
+            if val is not None:
+                result[k] = val
+        return result
 
 cache_service = CacheService()
 
 class AkshareService:
-    """AKShare / Eastmoney 接口封装"""
     
     @staticmethod
     def get_headers(referer="https://quote.eastmoney.com/"):
+        user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ]
         return {
-            "User-Agent": random.choice(USER_AGENTS),
-            "Referer": referer,
-            "Connection": "keep-alive",
-            "Accept": "*/*"
+            "User-Agent": random.choice(user_agents),
+            "Referer": referer
         }
 
     @staticmethod
     def get_time_phase():
+        """判断当前市场状态 (北京时间)"""
         now = datetime.utcnow() + timedelta(hours=8)
         if now.weekday() >= 5: return 'WEEKEND'
         t = now.time()
@@ -86,86 +103,176 @@ class AkshareService:
         elif t <= time(15, 0): return 'MARKET'
         else: return 'POST_MARKET'
 
+    # --- 核心重构: 获取全市场个股行情 (Cache Driven) ---
+    
     @staticmethod
-    def get_secid(code: str) -> str:
-        """智能生成 Eastmoney SecID"""
-        code = str(code).strip()
-        if '.' in code: return code # 已经带市场前缀
+    def fetch_stock_map_cached(market_type: str):
+        """
+        获取指定市场的全市场实时行情
+        缓存: 60秒 (个股行情变动快，保持较短缓存)
+        """
+        cache_key = f"market_spot_{market_type}"
+        cached = cache_service.get(cache_key, 60)
+        if cached: return cached
         
-        # 常见指数/ETF处理
-        if code in ['000001', '000300', '000688']: return f"1.{code}" # 上证
-        if code in ['399001', '399006']: return f"0.{code}" # 深证
+        result_map = {}
         
-        # 港股
-        if len(code) == 5 and code.isdigit(): return f"116.{code}"
-        
-        # A股逻辑
-        if len(code) == 6 and code.isdigit():
-            if code.startswith(('6', '9', '5', '11')): return f"1.{code}"
-            return f"0.{code}"
+        try:
+            if market_type == 'A':
+                # 沪深京 A 股: ak.stock_zh_a_spot_em()
+                df = ak.stock_zh_a_spot_em()
+                if not df.empty:
+                    for row in df.itertuples():
+                        try:
+                            code = str(row.代码)
+                            result_map[code] = {
+                                "price": float(row.最新价) if row.最新价 != '-' else 0.0,
+                                "change": float(row.涨跌幅) if row.涨跌幅 != '-' else 0.0,
+                                "name": str(row.名称)
+                            }
+                        except: pass
             
-        return f"0.{code}"
+            elif market_type == 'HK':
+                # 港股
+                df = ak.stock_hk_spot_em()
+                if not df.empty:
+                    for row in df.itertuples():
+                        try:
+                            code = str(row.代码)
+                            result_map[code] = {
+                                "price": float(row.最新价) if row.最新价 != '-' else 0.0,
+                                "change": float(row.涨跌幅) if row.涨跌幅 != '-' else 0.0,
+                                "name": str(row.名称)
+                            }
+                        except: pass
 
+            elif market_type == 'US':
+                # 美股
+                df = ak.stock_us_spot_em()
+                if not df.empty:
+                    for row in df.itertuples():
+                        try:
+                            raw_code = str(row.代码) if hasattr(row, '代码') else "" 
+                            name = str(row.名称)
+                            ticker = raw_code.split('.')[-1]
+                            data = {
+                                "price": float(row.最新价) if row.最新价 != '-' else 0.0,
+                                "change": float(row.涨跌幅) if row.涨跌幅 != '-' else 0.0,
+                                "name": name
+                            }
+                            result_map[ticker] = data
+                            result_map[name] = data 
+                        except: pass
+
+        except Exception as e:
+            logger.error(f"Fetch {market_type} spot failed: {e}")
+            return {} 
+
+        cache_service.set(cache_key, result_map)
+        return result_map
+
+    # --- 核心数据获取: ETF/LOF 实时行情 ---
     @staticmethod
-    def fetch_quotes_by_secids(secids: List[str]) -> Dict[str, Dict]:
-        """批量获取 SecID 的行情"""
-        if not secids: return {}
+    def fetch_etf_lof_spot_cached():
+        # ETF/LOF 行情缓存 60秒
+        key = "etf_lof_spot_map"
+        cached = cache_service.get(key, 60)
+        if cached: return cached
         
-        quotes = {}
-        batch_size = 30
-        unique_secids = list(set(secids))
+        result_map = {}
+        try:
+            df_etf = ak.fund_etf_spot_em()
+            if not df_etf.empty:
+                for row in df_etf.itertuples():
+                    try:
+                        code = str(row.代码)
+                        result_map[code] = {"price": float(row.最新价), "change": float(row.涨跌幅), "name": str(row.名称), "type": "ETF"}
+                    except: pass
+        except Exception as e: logger.warning(f"ETF spot fetch failed: {e}")
+
+        try:
+            df_lof = ak.fund_lof_spot_em()
+            if not df_lof.empty:
+                for row in df_lof.itertuples():
+                    try:
+                        code = str(row.代码)
+                        if code not in result_map:
+                            result_map[code] = {"price": float(row.最新价), "change": float(row.涨跌幅), "name": str(row.名称), "type": "LOF"}
+                    except: pass
+        except Exception as e: logger.warning(f"LOF spot fetch failed: {e}")
+
+        cache_service.set(key, result_map)
+        return result_map
+
+    # --- 核心数据获取: 全球/A股指数 ---
+    @staticmethod
+    def fetch_global_indices_data_cached():
+        # 市场指数缓存 1分钟 (用户A查完，用户B 1分钟内查直接复用)
+        key = "global_indices_spot_map"
+        cached = cache_service.get(key, 60)
+        if cached: return cached
+
+        indices_map = {}
+        try:
+            df_global = ak.index_global_spot_em()
+            if not df_global.empty:
+                for row in df_global.itertuples():
+                    try:
+                        name = str(row.名称)
+                        price = float(row.最新价)
+                        change = float(row.涨跌幅)
+                        indices_map[name] = {"price": price, "change": change, "name": name}
+                        if hasattr(row, '代码'): indices_map[str(row.代码)] = {"price": price, "change": change, "name": name}
+                    except: pass
+        except Exception as e: logger.warning(f"Global index fetch failed: {e}")
+
+        try:
+            df_zh = ak.stock_zh_index_spot()
+            if not df_zh.empty:
+                for row in df_zh.itertuples():
+                    try:
+                        code = str(row.代码) 
+                        name = str(row.名称)
+                        price = float(row.最新价)
+                        change = float(row.涨跌幅)
+                        clean_code = code.replace('sh', '').replace('sz', '')
+                        indices_map[clean_code] = {"price": price, "change": change, "name": name}
+                        indices_map[name] = {"price": price, "change": change, "name": name}
+                    except: pass
+        except Exception as e: logger.warning(f"ZH index fetch failed: {e}")
+
+        cache_service.set(key, indices_map)
+        return indices_map
+
+    # --- 核心数据获取: 官方盘后净值 ---
+    @staticmethod
+    def fetch_official_daily_nav_cached():
+        # 官方净值一天变一次，缓存 2小时即可，避免频繁爬取
+        key = "official_daily_nav_map"
+        cached = cache_service.get(key, 7200)
+        if cached: return cached
         
-        for i in range(0, len(unique_secids), batch_size):
-            batch = unique_secids[i:i+batch_size]
-            url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f2,f3,f4,f12,f13,f14&secids={','.join(batch)}"
-            
-            try:
-                headers = AkshareService.get_headers()
-                resp = GlobalSession.get().get(url, headers=headers, timeout=4.0)
-                data = resp.json()
-                
-                if data and 'data' in data and data['data']:
-                    diff_data = data['data'].get('diff', [])
-                    items = diff_data if isinstance(diff_data, list) else diff_data.values()
+        nav_map = {}
+        try:
+            df = ak.fund_open_fund_daily_em()
+            if not df.empty:
+                for row in df.itertuples():
+                    try:
+                        code = str(row.基金代码)
+                        nav_map[code] = {"nav": float(row.单位净值), "change": float(row.日增长率)}
+                    except: pass
+            cache_service.set(key, nav_map)
+            return nav_map
+        except Exception as e:
+            logger.warning(f"Official daily nav fetch failed: {e}")
+            return {}
 
-                    for item in items:
-                        code_val = str(item['f12'])
-                        market_val = str(item.get('f13', ''))
-                        price = float(item['f2']) if item['f2'] != '-' else 0.0
-                        change_p = float(item['f3']) if item['f3'] != '-' else 0.0
-                        name = item['f14']
-                        
-                        full_secid = f"{market_val}.{code_val}"
-                        quote_data = {
-                            "price": price,
-                            "change": change_p,
-                            "name": name,
-                            "code": code_val
-                        }
-                        
-                        quotes[full_secid] = quote_data
-                        # 同时以纯代码作为 Key 存储，方便查找
-                        quotes[code_val] = quote_data
-
-            except Exception as e:
-                logger.warning(f"Batch quote fetch error: {e}")
-                pass
-                
-        return quotes
-
+    # --- 其他基础接口 ---
     @staticmethod
     def fetch_fund_list_sync():
         try:
             df = ak.fund_name_em()
-            result = []
-            for row in df.itertuples():
-                result.append({
-                    "code": str(row.基金代码),
-                    "name": str(row.基金简称),
-                    "type": str(row.基金类型),
-                    "pinyin": str(row.拼音缩写)
-                })
-            return result
+            return [{"code": str(r.基金代码), "name": str(r.基金简称), "type": str(r.基金类型), "pinyin": str(r.拼音缩写)} for r in df.itertuples()]
         except: return []
 
     @staticmethod
@@ -175,24 +282,21 @@ class AkshareService:
             ts = int(time_module.time() * 1000)
             url = f"https://fundgz.1234567.com.cn/js/{code}.js?rt={ts}"
             headers = AkshareService.get_headers(referer="https://fund.eastmoney.com/")
-            resp = GlobalSession.get().get(url, headers=headers, timeout=2.5)
+            resp = GlobalSession.get().get(url, headers=headers, timeout=2.0)
             if resp.status_code == 200:
                 match = re.search(r'jsonpgz\s*=?\s*\((.*?)\)', resp.text, re.S)
                 if match:
                     json_str = match.group(1).strip().rstrip(';')
-                    try:
-                        fetched = json.loads(json_str)
-                        if fetched:
-                            data.update(fetched)
-                            data['source'] = 'official_realtime'
-                            if 'gztime' not in data and 'time' in data:
-                                data['gztime'] = data['time']
-                    except: pass
+                    fetched = json.loads(json_str)
+                    if fetched:
+                        data.update(fetched)
+                        data['source'] = 'official_realtime'
+                        if 'gztime' not in data and 'time' in data: data['gztime'] = data['time']
         except: pass 
         return data
 
     @staticmethod
-    @lru_cache(maxsize=128)
+    @lru_cache(maxsize=128) 
     def fetch_fund_history_sync_cached(code: str, day_str: str) -> pd.DataFrame:
         try:
             df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
@@ -206,42 +310,34 @@ class AkshareService:
     @staticmethod
     def fetch_holdings_sync(code: str) -> List[Dict]:
         try:
-            year = datetime.now().year
-            all_dfs = []
-            for y in [year, year - 1]:
+            current_year = datetime.now().year
+            combined_df = pd.DataFrame()
+            for y in [current_year, current_year - 1]:
                 try:
                     df = ak.fund_portfolio_hold_em(symbol=code, date=str(y))
-                    if not df.empty and '季度' in df.columns: all_dfs.append(df)
+                    if not df.empty and '季度' in df.columns: combined_df = pd.concat([combined_df, df])
                 except: continue
             
-            if not all_dfs: return []
-            combined = pd.concat(all_dfs)
-            
-            def parse_rank(q):
+            if combined_df.empty: return []
+
+            def parse_rank(q_str):
                 try:
-                    if '年报' in q: return int(re.search(r'(\d{4})', q).group(1)) * 100 + 5 
-                    q_match = re.search(r'(\d)季度', q)
-                    year_match = re.search(r'(\d{4})', q)
-                    if q_match and year_match: return int(year_match.group(1)) * 100 + int(q_match.group(1))
-                    return 0
+                    year_match = re.search(r'(\d{4})', q_str)
+                    y_val = int(year_match.group(1)) if year_match else 0
+                    if '年报' in q_str: return y_val * 100 + 5 
+                    q_match = re.search(r'(\d)季度', q_str)
+                    q_val = int(q_match.group(1)) if q_match else 0
+                    return y_val * 100 + q_val
                 except: return 0
 
-            combined['rank'] = combined['季度'].apply(parse_rank)
-            combined['占净值比例'] = pd.to_numeric(combined['占净值比例'], errors='coerce').fillna(0)
-            sorted_df = combined.sort_values(by=['rank', '占净值比例'], ascending=[False, False])
-            
+            combined_df['rank'] = combined_df['季度'].apply(parse_rank)
+            combined_df['占净值比例'] = pd.to_numeric(combined_df['占净值比例'], errors='coerce').fillna(0)
+            sorted_df = combined_df.sort_values(by=['rank', '占净值比例'], ascending=[False, False])
             if sorted_df.empty: return []
-            latest_rank = sorted_df.iloc[0]['rank']
-            top10 = sorted_df[sorted_df['rank'] == latest_rank].head(10)
             
-            result = []
-            for _, r in top10.iterrows():
-                result.append({
-                    "code": str(r['股票代码']), 
-                    "name": str(r['股票名称']), 
-                    "percent": float(r['占净值比例'])
-                })
-            return result
+            latest_rank = sorted_df.iloc[0]['rank']
+            latest_holdings = sorted_df[sorted_df['rank'] == latest_rank].head(10) 
+            return [{"code": str(r['股票代码']), "name": str(r['股票名称']), "percent": float(r['占净值比例'])} for _, r in latest_holdings.iterrows()]
         except: return []
 
     @staticmethod
@@ -255,110 +351,80 @@ class AkshareService:
         except: return {}
 
     @staticmethod
-    def fetch_market_indices_sync(codes_str: Optional[str] = None):
-        # 默认指数
-        default_map = {
-            "上证指数": "1.000001", "深证成指": "0.399001", "创业板指": "0.399006", 
-            "科创50": "1.000688", "沪深300": "1.000300", "恒生指数": "100.HSI",
-            "纳斯达克": "100.NDX", "标普500": "100.SPX"
-        }
-        
-        target_codes = codes_str.split(',') if codes_str else list(default_map.values())
-        secids = [AkshareService.get_secid(c) for c in target_codes]
-        quotes = AkshareService.fetch_quotes_by_secids(secids)
-        
-        result = []
-        for requested_code in target_codes:
-            secid = AkshareService.get_secid(requested_code)
-            data = quotes.get(secid) or quotes.get(requested_code) or quotes.get(secid.split('.')[-1])
-            
-            if data:
-                result.append({
-                    "name": data['name'], 
-                    "code": requested_code,
-                    "changePercent": data['change'], 
-                    "value": data['price'],
-                    "score": int(max(0, min(100, 50 + data['change'] * 10))),
-                })
-        return result
-
-    @staticmethod
     def fetch_sector_rankings_sync():
         try:
-            # 获取行业板块实时行情
             df = ak.stock_board_industry_name_em()
             if df.empty: return {"top": [], "bottom": []}
-            
-            # 必须字段: 板块名称, 最新价, 涨跌幅, 领涨股票
-            df = df[['板块名称', '最新价', '涨跌幅', '领涨股票']]
-            df = df.sort_values(by='涨跌幅', ascending=False)
-            
-            top3 = []
-            for _, r in df.head(3).iterrows():
-                top3.append({
-                    "name": r['板块名称'],
-                    "changePercent": float(r['涨跌幅']),
-                    "leadingStock": r['领涨股票']
-                })
-                
-            bottom3 = []
-            for _, r in df.tail(3).iterrows():
-                bottom3.append({
-                    "name": r['板块名称'],
-                    "changePercent": float(r['涨跌幅']),
-                    "leadingStock": r['领涨股票']
-                })
-                
-            return {"top": top3, "bottom": bottom3}
-        except Exception as e:
-            logger.error(f"Sector rank error: {e}")
-            return {"top": [], "bottom": []}
+            df['涨跌幅'] = pd.to_numeric(df['涨跌幅'], errors='coerce').fillna(0)
+            df_sorted = df.sort_values(by='涨跌幅', ascending=False)
+            def extract(sub): return [{"name": r['板块名称'], "changePercent": float(r['涨跌幅']), "leadingStock": r['领涨股票']} for _, r in sub.iterrows()]
+            return {"top": extract(df_sorted.head(3)), "bottom": extract(df_sorted.tail(3))}
+        except: return {"top": [], "bottom": []}
 
     @staticmethod
     def fetch_fund_rankings_sync():
+        """
+        获取基金排行
+        策略升级: 优先尝试获取【实时估值排行】(ak.fund_value_estimation_em)，
+        如果失败或盘后，回退到【官方净值排行】(ak.fund_open_fund_rank_em)
+        """
+        phase = AkshareService.get_time_phase()
+        
+        # 1. 尝试获取实时估值排行 (仅在盘中或盘前有效，晚间可能无数据)
         try:
-            # 获取开放式基金实时行情，按日增长率排序
-            # 注意：这个接口数据量较大，必须缓存
+            if phase in ['PRE_MARKET', 'MARKET', 'LUNCH_BREAK']:
+                # fund_value_estimation_em 返回全市场估值
+                df_est = ak.fund_value_estimation_em(symbol="全部")
+                if not df_est.empty:
+                    # 字段: 基金代码, 基金名称, 交易日-估算数据-估算增长率 ...
+                    # 需要清洗 '估算增长率' (带%的字符串)
+                    df_est['est_change'] = df_est['交易日-估算数据-估算增长率'].str.replace('%', '', regex=False)
+                    df_est['est_change'] = pd.to_numeric(df_est['est_change'], errors='coerce').fillna(0)
+                    df_est['nav'] = pd.to_numeric(df_est['交易日-公布数据-单位净值'], errors='coerce').fillna(0)
+                    
+                    df_sorted = df_est.sort_values(by='est_change', ascending=False)
+                    
+                    def to_dict_est(rows): 
+                        return [{
+                            "code": str(r.基金代码), 
+                            "name": str(r.基金名称), 
+                            "changePercent": float(r.est_change), 
+                            "nav": float(r.nav),
+                            "isRealtime": True
+                        } for r in rows.itertuples()]
+
+                    # 检查是否有有效数据 (避免全是0的情况)
+                    top_change = df_sorted.iloc[0]['est_change']
+                    if abs(top_change) > 0.01:
+                        return {
+                            "gainers": to_dict_est(df_sorted.head(20)),
+                            "losers": to_dict_est(df_sorted.tail(20).iloc[::-1])
+                        }
+        except Exception as e:
+            logger.warning(f"Realtime ranking fetch failed: {e}")
+
+        # 2. 回退方案: 昨收官方排行
+        try:
             df = ak.fund_open_fund_rank_em(symbol="全部") 
             if df.empty: return {"gainers": [], "losers": []}
-            
-            # 字段: 基金代码, 基金简称, 日增长率, 单位净值, 累计净值
             df['日增长率'] = pd.to_numeric(df['日增长率'], errors='coerce').fillna(0)
-            df = df.sort_values(by='日增长率', ascending=False)
-            
-            def to_dict(rows):
-                res = []
-                for _, r in rows.iterrows():
-                    res.append({
-                        "code": str(r['基金代码']),
-                        "name": str(r['基金简称']),
-                        "changePercent": float(r['日增长率']),
-                        "nav": float(r['单位净值']) if '单位净值' in r else 0
-                    })
-                return res
+            df['单位净值'] = pd.to_numeric(df['单位净值'], errors='coerce').fillna(0)
+            df_sorted = df.sort_values(by='日增长率', ascending=False)
+            def to_dict(rows): return [{"code": str(r['基金代码']), "name": str(r['基金简称']), "changePercent": float(r['日增长率']), "nav": float(r['单位净值']), "isRealtime": False} for _, r in rows.iterrows()]
+            return {"gainers": to_dict(df_sorted.head(20)), "losers": to_dict(df_sorted.tail(20).iloc[::-1])}
+        except: return {"gainers": [], "losers": []}
 
-            return {
-                "gainers": to_dict(df.head(20)),
-                "losers": to_dict(df.tail(20).iloc[::-1]) # 倒序，跌幅最大的排前面
-            }
-        except Exception as e:
-            logger.error(f"Fund rank error: {e}")
-            return {"gainers": [], "losers": []}
-
-
-# --- 业务逻辑 ---
+# --- 控制器逻辑 ---
 
 class FundController:
-    
     @staticmethod
     async def get_search_results(key: str):
-        cached = cache_service.get("funds_list", 86400)
+        # 基金列表缓存 24小时 (变化频率极低)
+        cached = cache_service.get("funds_list", 86400) 
         if not cached:
             cached = await run_in_threadpool(AkshareService.fetch_fund_list_sync)
             if cached: cache_service.set("funds_list", cached)
-        
         if not cached: return []
-        
         key = key.upper()
         res = []
         count = 0
@@ -371,85 +437,180 @@ class FundController:
 
     @staticmethod
     async def get_fund_detail(code: str):
-        # 并行获取
+        # 基金持仓/详情缓存 24小时 (Top 10持仓仅季度更新)
+        # 这样多人查询同一基金详情时，直接返回缓存
+        cache_key = f"fund_detail_full_{code}"
+        cached = cache_service.get(cache_key, 86400)
+        if cached: return cached
+
+        loop = asyncio.get_running_loop()
         holdings_task = run_in_threadpool(AkshareService.fetch_holdings_sync, code)
         basic_task = run_in_threadpool(AkshareService.fetch_fund_basic_info_sync, code)
         
-        holdings, basic = await asyncio.gather(holdings_task, basic_task)
+        # 预先触发所有市场的缓存
+        a_spot_task = run_in_threadpool(AkshareService.fetch_stock_map_cached, 'A')
         
-        # 获取持仓股票的实时行情
+        holdings, basic, a_spot_map = await asyncio.gather(holdings_task, basic_task, a_spot_task)
+        
+        hk_spot_map = {}
+        us_spot_map = {}
+        
+        has_hk = any(len(h['code']) == 5 for h in holdings)
+        has_us = any(not h['code'].isdigit() for h in holdings)
+        
+        if has_hk:
+            hk_spot_map = await run_in_threadpool(AkshareService.fetch_stock_map_cached, 'HK')
+        if has_us:
+            us_spot_map = await run_in_threadpool(AkshareService.fetch_stock_map_cached, 'US')
+
+        # 匹配行情
         if holdings:
-            stock_codes = [h['code'] for h in holdings]
-            secids = [AkshareService.get_secid(c) for c in stock_codes]
-            quotes = await run_in_threadpool(AkshareService.fetch_quotes_by_secids, secids)
-            
             for h in holdings: 
-                # 尝试通过 SecID 匹配，或者直接代码匹配
-                secid = AkshareService.get_secid(h['code'])
-                q = quotes.get(secid) or quotes.get(h['code'])
+                c = h['code']
+                spot_data = None
                 
-                if q:
-                    h['changePercent'] = q['change']
-                    h['currentPrice'] = q['price']
-                    if q['name']: h['name'] = q['name']
+                if len(c) == 6 and c.isdigit():
+                    spot_data = a_spot_map.get(c)
+                elif len(c) == 5 and c.isdigit():
+                    spot_data = hk_spot_map.get(c)
+                else:
+                    spot_data = us_spot_map.get(c) or us_spot_map.get(h['name'])
+
+                if spot_data:
+                    h['changePercent'] = spot_data['change']
+                    h['currentPrice'] = spot_data['price']
+                    if not h.get('name'): h['name'] = spot_data['name']
                 else:
                     h['changePercent'] = 0
                     h['currentPrice'] = 0
 
-        return {
-            "code": code, 
-            "manager": basic.get('基金经理', '暂无'), 
-            "holdings": holdings,
-            "fund_size": basic.get('最新规模', '--'),
-            "start_date": basic.get('成立时间', '--'),
-            "type": basic.get('基金类型', '混合型'), # 支持显示基金类型
+        result = {
+            "code": code, "manager": basic.get('基金经理', '暂无'), "holdings": holdings,
+            "fund_size": basic.get('最新规模', '--'), "start_date": basic.get('成立时间', '--'),
+            "type": basic.get('基金类型', '混合型'),
         }
+        
+        # 写入缓存
+        cache_service.set(cache_key, result)
+        return result
 
     @staticmethod
     async def get_market_overview(codes_str: Optional[str] = None):
-        # 指数
-        cache_key_idx = f"market_idx_{codes_str or 'def'}"
-        indices = cache_service.get(cache_key_idx, 30) # 30s cache
-        if not indices:
-            indices = await run_in_threadpool(AkshareService.fetch_market_indices_sync, codes_str)
-            cache_service.set(cache_key_idx, indices)
+        default_map = {
+            "上证指数": "1.000001", "深证成指": "0.399001", "创业板指": "0.399006", 
+            "科创50": "1.000688", "沪深300": "1.000300", "恒生指数": "100.HSI",
+            "纳斯达克": "100.NDX", "标普500": "100.SPX"
+        }
+        target_codes = codes_str.split(',') if codes_str else list(default_map.values())
+
+        # 指数数据由 AkshareService 内部缓存 60秒
+        indices_spot_map = await run_in_threadpool(AkshareService.fetch_global_indices_data_cached)
+        
+        indices = []
+        code_to_name_map = {v: k for k, v in default_map.items()}
+
+        for req_c in target_codes:
+            found = False
+            clean_code = req_c.split('.')[-1]
+            if clean_code in indices_spot_map:
+                data = indices_spot_map[clean_code]
+                indices.append({
+                    "name": data['name'], "code": req_c,
+                    "changePercent": data['change'], "value": data['price'],
+                    "score": int(max(0, min(100, 50 + data['change'] * 10))),
+                })
+                found = True
             
-        # 板块 (Top/Bottom 3)
-        sectors = cache_service.get("market_sectors", 300) # 5min cache
+            if not found:
+                 possible_name = code_to_name_map.get(req_c, req_c)
+                 if possible_name in indices_spot_map:
+                      data = indices_spot_map[possible_name]
+                      indices.append({
+                        "name": data['name'], "code": req_c,
+                        "changePercent": data['change'], "value": data['price'],
+                        "score": int(max(0, min(100, 50 + data['change'] * 10))),
+                      })
+                      found = True
+
+        # 板块排行缓存 30分钟
+        sectors = cache_service.get("market_sectors", 1800) 
         if not sectors:
             sectors = await run_in_threadpool(AkshareService.fetch_sector_rankings_sync)
             cache_service.set("market_sectors", sectors)
             
-        # 基金榜单 (Top/Bottom 20)
-        fund_ranks = cache_service.get("fund_ranks", 600) # 10min cache
+        # 基金排行缓存 30分钟
+        fund_ranks = cache_service.get("fund_ranks", 1800) 
         if not fund_ranks:
             fund_ranks = await run_in_threadpool(AkshareService.fetch_fund_rankings_sync)
             cache_service.set("fund_ranks", fund_ranks)
 
-        return {
-            "indices": indices or [],
-            "sectors": sectors or {"top": [], "bottom": []},
-            "fundRankings": fund_ranks or {"gainers": [], "losers": []}
-        }
+        return { "indices": indices, "sectors": sectors or {"top": [], "bottom": []}, "fundRankings": fund_ranks or {"gainers": [], "losers": []} }
 
     @staticmethod
     async def batch_estimate(codes: List[str]):
         if not codes: return []
-        loop = asyncio.get_running_loop()
         
-        today_str = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d')
+        # --- 优化策略: 细粒度缓存 ---
+        # 1. 估值结果缓存 5分钟 (平衡实时性与服务器压力)
+        # 2. 先查缓存，只对缓存失效的基金发起请求
+        
+        CACHE_TTL = 300 # 5分钟
+        results = []
+        missing_codes = []
+        
+        # 构造缓存 key list
+        cache_keys = [f"est_result_{c}" for c in codes]
+        # 批量获取缓存
+        cached_data = cache_service.mget(cache_keys, CACHE_TTL)
+        
+        for c in codes:
+            key = f"est_result_{c}"
+            if key in cached_data:
+                results.append(cached_data[key])
+            else:
+                missing_codes.append(c)
+        
+        if not missing_codes:
+            return results
+
+        # 对缺失的基金进行计算
+        loop = asyncio.get_running_loop()
+        today = datetime.utcnow() + timedelta(hours=8)
+        today_str = today.strftime('%Y-%m-%d')
         today_cache_key = today_str
 
         async def fetch_one(c):
             est = await loop.run_in_executor(None, AkshareService.fetch_realtime_estimate_direct_sync, c)
+            # 历史净值可以用较长缓存 (日级别)
             hist = await loop.run_in_executor(None, AkshareService.fetch_fund_history_sync_cached, c, today_cache_key)
             return c, est, hist
 
-        results_data = await asyncio.gather(*[fetch_one(c) for c in codes])
+        results_data = await asyncio.gather(*[fetch_one(c) for c in missing_codes])
         
-        calc_needed = [] 
+        etf_lof_map = None
+        daily_nav_map = None
+        
         phase = AkshareService.get_time_phase()
-        results_map = {} 
+        results_map = {}
+        calc_needed = []
+        
+        needs_etf_backup = False
+        needs_daily_backup = False
+
+        for _, est, _ in results_data:
+             gszzl = est.get('gszzl', '0')
+             if str(gszzl) == '0' or str(gszzl) == '0.00':
+                 needs_etf_backup = True
+             if phase == 'POST_MARKET':
+                 needs_daily_backup = True
+        
+        if needs_etf_backup:
+            etf_lof_map = await loop.run_in_executor(None, AkshareService.fetch_etf_lof_spot_cached)
+        
+        if needs_daily_backup:
+            daily_nav_map = await loop.run_in_executor(None, AkshareService.fetch_official_daily_nav_cached)
+
+        newly_calculated = []
 
         for code, est, hist in results_data:
             res = est 
@@ -457,7 +618,6 @@ class FundController:
                 try: return float(v)
                 except: return default
 
-            # 获取历史最新的净值
             hist_last_nav = 0.0
             hist_last_date = ""
             if not hist.empty:
@@ -465,88 +625,92 @@ class FundController:
                 hist_last_nav = float(latest['单位净值'])
                 hist_last_date = str(latest['净值日期'])
 
-            # API 返回的 DWJZ (单位净值)
             api_dwjz = safe_float(res.get('dwjz'))
             api_jzrq = res.get('jzrq', '')
+            api_gszzl = safe_float(res.get('gszzl'))
 
-            # 核心逻辑修复 5: 真实净值判断
-            # 如果 API 返回的净值日期是今天，或者比历史数据的日期更新，说明官方净值已出
-            # 特别是在 10:00 PM 以后，API 可能返回了今日的净值
             is_official_updated = False
             
-            if api_jzrq == today_str and api_dwjz > 0:
-                is_official_updated = True
-            elif api_jzrq > hist_last_date and api_dwjz > 0:
-                is_official_updated = True
+            if api_jzrq == today_str and api_dwjz > 0: is_official_updated = True
             
-            # 基础赋值
-            last_nav = hist_last_nav if hist_last_nav > 0 else api_dwjz
-            last_date = hist_last_date if hist_last_date > "" else api_jzrq
+            if not is_official_updated and daily_nav_map and code in daily_nav_map:
+                daily_data = daily_nav_map[code]
+                res['dwjz'] = str(daily_data['nav'])
+                res['jzrq'] = today_str 
+                res['gsz'] = str(daily_data['nav'])
+                res['gszzl'] = str(daily_data['change'])
+                res['source'] = 'official_daily_em'
+                res['gztime'] = "已更新(官方)"
+                api_dwjz = daily_data['nav']
+                is_official_updated = True
 
-            # 如果官方净值已更新，强制覆盖估值
+            if not is_official_updated and api_gszzl == 0 and etf_lof_map and code in etf_lof_map:
+                 spot_info = etf_lof_map[code]
+                 res['gsz'] = str(spot_info['price'])
+                 res['gszzl'] = str(spot_info['change'])
+                 res['source'] = f'realtime_{spot_info["type"].lower()}' 
+                 res['gztime'] = "实时交易"
+            
+            last_nav = hist_last_nav if hist_last_nav > 0 else api_dwjz
+            
             if is_official_updated:
-                res['gsz'] = str(api_dwjz)
-                # 计算实际涨幅: (今日净值 - 昨日净值) / 昨日净值
-                # 注意：这里的 last_nav 可能是前天的，如果 api_jzrq > hist_last_date
-                if hist_last_nav > 0:
+                if hist_last_nav > 0 and api_dwjz > 0:
                      change = ((api_dwjz - hist_last_nav) / hist_last_nav) * 100
                      res['gszzl'] = "{:.2f}".format(change)
-                else:
+                elif res.get('gszzl') is None:
                      res['gszzl'] = "0.00"
-                
-                res['dwjz'] = str(api_dwjz) # 确保返回最新
-                res['jzrq'] = api_jzrq
-                res['source'] = 'official_final'
-                res['gztime'] = "已更新"
+                res['gsz'] = str(api_dwjz)
+                res['dwjz'] = str(api_dwjz) 
             else:
-                # 常规盘中/盘前逻辑
-                res['_last_nav'] = last_nav # 暂存用于计算
-                
-                # 如果 API 估值无效，标记需要手动计算
+                res['_last_nav'] = last_nav 
                 gsz = safe_float(res.get('gsz'))
-                if gsz <= 0 and phase != 'PRE_MARKET': # 盘前允许为0
+                if gsz <= 0 and phase != 'PRE_MARKET' and 'realtime' not in res.get('source', ''): 
                     calc_needed.append(code)
 
             results_map[code] = res
 
-        # ... (后续的手动估值计算逻辑保持不变，依赖 fetch_quotes_by_secids) ...
-        # 为节省篇幅，这里复用原有的重仓股估值逻辑，但确保使用新的 fetch_quotes
-        
+        # 重仓股估算
         if calc_needed:
-            codes_to_fetch_h = [c for c in calc_needed if not cache_service.get(f"holdings_{c}", 3600)]
+            # 持仓数据缓存 24小时 (极少变动)
+            codes_to_fetch_h = [c for c in calc_needed if not cache_service.get(f"holdings_{c}", 86400)]
             if codes_to_fetch_h:
                  h_tasks = [run_in_threadpool(AkshareService.fetch_holdings_sync, c) for c in codes_to_fetch_h]
                  fetched_h = await asyncio.gather(*h_tasks)
                  for i, c in enumerate(codes_to_fetch_h): cache_service.set(f"holdings_{c}", fetched_h[i])
             
-            all_stocks = set()
-            fund_holdings = {}
+            all_holdings_flag = set()
             for c in calc_needed:
-                h = cache_service.get(f"holdings_{c}", 3600) or []
-                fund_holdings[c] = h
-                for stock in h: all_stocks.add(stock['code'])
+                h = cache_service.get(f"holdings_{c}", 86400) or []
+                for stock in h:
+                    if len(stock['code']) == 6 and stock['code'].isdigit(): all_holdings_flag.add('A')
+                    elif len(stock['code']) == 5 and stock['code'].isdigit(): all_holdings_flag.add('HK')
+                    else: all_holdings_flag.add('US')
             
-            secids = [AkshareService.get_secid(c) for c in all_stocks]
-            stock_quotes = await run_in_threadpool(AkshareService.fetch_quotes_by_secids, secids)
-            
+            a_map = await run_in_threadpool(AkshareService.fetch_stock_map_cached, 'A') if 'A' in all_holdings_flag else {}
+            hk_map = await run_in_threadpool(AkshareService.fetch_stock_map_cached, 'HK') if 'HK' in all_holdings_flag else {}
+            us_map = await run_in_threadpool(AkshareService.fetch_stock_map_cached, 'US') if 'US' in all_holdings_flag else {}
+
             for c in calc_needed:
                 data = results_map[c]
-                holdings = fund_holdings.get(c, [])
+                holdings = cache_service.get(f"holdings_{c}", 86400) or []
                 if not holdings: continue
                 
                 weighted_chg = 0
                 total_w = 0
                 for h in holdings:
                     w = h['percent']
-                    q = stock_quotes.get(AkshareService.get_secid(h['code'])) or stock_quotes.get(h['code'])
+                    sc = h['code']
+                    sq = None
+                    if len(sc) == 6 and sc.isdigit(): sq = a_map.get(sc)
+                    elif len(sc) == 5 and sc.isdigit(): sq = hk_map.get(sc)
+                    else: sq = us_map.get(sc)
                     
-                    if q:
-                        weighted_chg += (q['change'] * w)
+                    if sq:
+                        weighted_chg += (sq['change'] * w)
                         total_w += w
                 
                 est_chg = 0
-                if total_w > 0: est_chg = (weighted_chg / total_w) * 0.95 # 0.95 修正系数
-                
+                if total_w > 0: est_chg = (weighted_chg / total_w) * 0.95 
                 last_n = data.get('_last_nav', 0)
                 if last_n > 0:
                     est_val = last_n * (1 + est_chg / 100.0)
@@ -556,7 +720,14 @@ class FundController:
                     now = datetime.now()
                     data['gztime'] = f"{now.hour:02}:{now.minute:02}"
 
-        return [results_map[c] for c in codes]
+        # 将新计算的结果存入缓存，并合并到结果集
+        for c in missing_codes:
+            if c in results_map:
+                final_res = results_map[c]
+                cache_service.set(f"est_result_{c}", final_res)
+                results.append(final_res)
+
+        return results
 
     @staticmethod
     async def analyze_content(prompt: str):
@@ -568,43 +739,35 @@ class FundController:
         except Exception as e: raise HTTPException(status_code=500, detail=str(e))
 
 # --- FastAPI App ---
-
 app = FastAPI(title="SmartFund API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 router = APIRouter(prefix="/api")
 
 @router.get("/status")
-def status(): return { "phase": AkshareService.get_time_phase(), "ts": datetime.now().timestamp(), "version": "2.0" }
-
+def status(): return { "phase": AkshareService.get_time_phase(), "ts": datetime.now().timestamp(), "version": "3.6" }
 @router.get("/search")
 async def search(key: str = Query(..., min_length=1)): return await FundController.get_search_results(key)
-
 @router.get("/market/overview")
 async def market_overview(codes: Optional[str] = Query(None)): return await FundController.get_market_overview(codes)
-
 @router.get("/estimate/{code}")
 async def estimate_one(code: str):
     res = await FundController.batch_estimate([code])
     return res[0] if res else {}
-
 @router.post("/estimate/batch")
 async def estimate_batch(payload: dict = Body(...)): return await FundController.batch_estimate(payload.get('codes', []))
-
 @router.get("/fund/{code}")
 async def detail(code: str): return await FundController.get_fund_detail(code)
-
 @router.get("/history/{code}")
 async def history(code: str):
-    today_cache_key = datetime.now().strftime('%Y-%m-%d')
+    today = datetime.utcnow() + timedelta(hours=8)
+    today_cache_key = today.strftime('%Y-%m-%d')
     df = await run_in_threadpool(AkshareService.fetch_fund_history_sync_cached, code, today_cache_key)
     if df.empty: return []
     return [{"date": str(r['净值日期']), "value": float(r['单位净值'])} for _, r in df.tail(365).iterrows()]
-
 @router.post("/analyze")
 async def analyze(payload: dict = Body(...)): return await FundController.analyze_content(payload.get("prompt", ""))
 
 app.include_router(router)
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     uvicorn.run(app, host="0.0.0.0", port=port)

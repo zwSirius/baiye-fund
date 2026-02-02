@@ -63,6 +63,10 @@
         font-family: 'Inter', 'Noto Sans SC', sans-serif;
         -webkit-tap-highlight-color: transparent;
         overscroll-behavior-y: none;
+        /* High DPI Rendering Optimizations */
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        text-rendering: optimizeLegibility;
       }
       .pb-safe {
         padding-bottom: env(safe-area-inset-bottom);
@@ -90,6 +94,13 @@
         backdrop-filter: blur(8px);
         border: 1px solid rgba(255, 255, 255, 0.5);
       }
+      
+      /* Ensure crisp borders on high-DPI screens */
+      @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) { 
+        .border, .border-b, .border-t, .border-l, .border-r {
+          border-width: 0.5px;
+        }
+      }
     </style>
 <script type="importmap">
 {
@@ -111,6 +122,6 @@
 </head>
   <body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors duration-300">
     <div id="root"></div>
-    <script type="module" src="./index.tsx"></script>
+    <script type="module" src="/src/index.tsx"></script>
   </body>
 </html>

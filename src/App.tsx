@@ -24,12 +24,12 @@ import { LayoutGrid, Settings, Bot, Plus, Moon, Sun, Monitor, Download, Upload, 
 const NavBtn = ({ icon, label, isActive, onClick }: any) => (
     <button 
         onClick={onClick} 
-        className={`flex flex-col items-center justify-center min-w-[3.5rem] h-full transition duration-300 relative ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 hover:text-slate-600'}`}
+        className={`flex flex-col items-center justify-center min-w-[3.5rem] h-full transition-all duration-300 gap-0.5 ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 hover:text-slate-600'}`}
     >
-        <div className={`transition-transform duration-300 ${isActive ? '-translate-y-1' : ''}`}>
-             {React.cloneElement(icon, { strokeWidth: isActive ? 2.5 : 2, size: 22 })}
+        <div className={`transition-transform duration-300 ${isActive ? '-translate-y-1' : 'translate-y-1'}`}>
+             {React.cloneElement(icon, { strokeWidth: isActive ? 2.5 : 2, size: 20 })}
         </div>
-        <span className={`text-[9px] font-medium absolute bottom-3 transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-0 translate-y-2'}`}>
+        <span className={`text-[10px] font-medium transition-all duration-300 ${isActive ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-2 scale-50'} h-3`}>
             {label}
         </span>
     </button>
