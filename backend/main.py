@@ -84,11 +84,12 @@ class AkshareService:
     """AKShare / Eastmoney 接口封装"""
     
     @staticmethod
-    def get_headers():
+    def get_headers(referer="http://fund.eastmoney.com/"):
         return {
             "User-Agent": random.choice(USER_AGENTS),
-            "Referer": "http://fund.eastmoney.com/",
-            "Connection": "keep-alive"
+            "Referer": referer,
+            "Connection": "keep-alive",
+            "Accept": "*/*"
         }
 
     @staticmethod
@@ -123,7 +124,7 @@ class AkshareService:
     def fetch_realtime_estimate_direct_sync(code: str):
         """
         [关键修复] 直接访问 fundgz 接口获取实时估值
-        URL: http://fundgz.1234567.com.cn/js/{code}.js
+        URL: https://fundgz.1234567.com.cn/js/{code}.js
         """
         data = { 
             "fundcode": code,
@@ -136,24 +137,19 @@ class AkshareService:
         }
         try:
             ts = int(time_module.time() * 1000)
-            # 修正: 移除 gszzl_ 前缀，直接使用 js/{code}.js
-            url = f"http://fundgz.1234567.com.cn/js/{code}.js?rt={ts}"
+            # 使用 HTTPS，移除 gszzl_ 前缀
+            url = f"https://fundgz.1234567.com.cn/js/{code}.js?rt={ts}"
             
-            # 日志记录请求 URL，方便验证
-            # logger.info(f"Requesting Estimate: {url}")
-
-            # 必须设置 Referer 否则可能被拒
-            headers = AkshareService.get_headers()
+            headers = AkshareService.get_headers(referer="https://fund.eastmoney.com/")
             
             resp = GlobalSession.get().get(url, headers=headers, timeout=2.0)
             
             if resp.status_code == 200:
                 # 返回格式: jsonpgz({"fundcode":"001186", ...});
-                # 使用 re.S (DOTALL) 让 . 匹配换行符，使用 .*? 非贪婪匹配
+                # 非贪婪匹配
                 match = re.search(r'jsonpgz\((.*?)\)', resp.text, re.S)
                 if match:
                     json_str = match.group(1)
-                    # 去除可能存在的末尾分号等杂质
                     json_str = json_str.strip().rstrip(';')
                     try:
                         fetched = json.loads(json_str)
@@ -161,6 +157,7 @@ class AkshareService:
                             data.update(fetched)
                             data['source'] = 'official_realtime'
                     except json.JSONDecodeError:
+                        logger.warning(f"JSON Parse failed for {code}: {json_str[:50]}")
                         pass
         except Exception as e:
             logger.warning(f"Estimate fetch failed for {code}: {e}")
@@ -169,7 +166,7 @@ class AkshareService:
 
     @staticmethod
     def fetch_fund_history_sync(code: str) -> pd.DataFrame:
-        """获取基金历史净值 (ak.fund_open_fund_info_em)"""
+        """获取基金历史净值"""
         try:
             df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
             if not df.empty:
@@ -182,11 +179,10 @@ class AkshareService:
 
     @staticmethod
     def fetch_holdings_sync(code: str) -> List[Dict]:
-        """获取基金持仓 (ak.fund_portfolio_hold_em)"""
+        """获取基金持仓"""
         try:
             year = datetime.now().year
             all_dfs = []
-            # 尝试最近两年
             for y in [year, year - 1]:
                 try:
                     df = ak.fund_portfolio_hold_em(symbol=code, date=str(y))
@@ -197,7 +193,6 @@ class AkshareService:
             if not all_dfs: return []
             combined = pd.concat(all_dfs)
             
-            # 排序：年报 > 4季度 > 3季度 ...
             def parse_rank(q):
                 try:
                     if '年报' in q: return int(re.search(r'(\d{4})', q).group(1)) * 100 + 5 
@@ -230,7 +225,6 @@ class AkshareService:
 
     @staticmethod
     def fetch_fund_basic_info_sync(code: str):
-        """获取基金基本信息"""
         try:
             df = ak.fund_individual_basic_info_xq(symbol=code)
             info = {}
@@ -244,7 +238,6 @@ class AkshareService:
 
     @staticmethod
     def fetch_market_indices_sync():
-        """获取全市场指数行情 (ak.stock_zh_index_spot_em)"""
         try:
             df = ak.stock_zh_index_spot_em(symbol="沪深重要指数")
             if df.empty: return []
@@ -286,20 +279,29 @@ class AkshareService:
             batch = unique_codes[i:i+batch_size]
             secids = []
             for c in batch:
-                if c.startswith('6'):
-                    secids.append(f"1.{c}")
-                elif c.startswith('900'):
-                    secids.append(f"1.{c}")
-                elif c.startswith('0') or c.startswith('3'):
-                    secids.append(f"0.{c}")
-                elif c.startswith('8') or c.startswith('4'):
-                    secids.append(f"0.{c}")
+                # 构造 Eastmoney secid
+                # 港股 (5位) -> 116.xxxxx
+                # A股 (6位) -> 1.6xxxxx (沪), 0.0xxxxx (深), 0.3xxxxx (创), 0.8/0.4/0.92 (北)
+                if len(c) == 5 and c.isdigit():
+                    secids.append(f"116.{c}")
+                elif len(c) == 6 and c.isdigit():
+                    if c.startswith('6') or c.startswith('9'):
+                        secids.append(f"1.{c}")
+                    else:
+                        # 0, 3, 8, 4, 2
+                        secids.append(f"0.{c}")
                 else:
-                    secids.append(f"0.{c}")
-            
+                    # 尝试默认 0 (如 8xxxxx 北交所)
+                    if c.isdigit():
+                        secids.append(f"0.{c}")
+
+            if not secids: continue
+
             url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f2,f3,f12,f14&secids={','.join(secids)}"
             try:
-                resp = GlobalSession.get().get(url, headers=AkshareService.get_headers(), timeout=3.0)
+                # Referer 必须是 quote.eastmoney.com
+                headers = AkshareService.get_headers(referer="https://quote.eastmoney.com/")
+                resp = GlobalSession.get().get(url, headers=headers, timeout=3.0)
                 data = resp.json()
                 if data and 'data' in data and 'diff' in data['data']:
                     for item in data['data']['diff']:
@@ -309,7 +311,8 @@ class AkshareService:
                             "change": float(item['f3']) if item['f3'] != '-' else 0.0,
                             "name": item['f14']
                         }
-            except Exception: 
+            except Exception as e: 
+                logger.warning(f"Stock quote fetch error: {e}")
                 pass
         return quotes
 
@@ -409,7 +412,6 @@ class FundController:
 
         results_data = await asyncio.gather(*[fetch_one(c) for c in codes])
         
-        final_results = []
         calc_needed = [] # 真正需要手动计算的
         
         phase = AkshareService.get_time_phase()
@@ -439,29 +441,37 @@ class FundController:
             res['_last_nav'] = last_nav
             
             # --- 关键修复：判断逻辑 ---
-            # 只要 source 是 official_realtime 且 gsz 有效 (>0)，就绝对信任，不覆盖
-            
             gsz = float(res.get('gsz', 0))
+            gszzl = float(res.get('gszzl', 0))
             source = res.get('source', 'none')
             
             need_manual = False
             
-            if source == 'official_realtime' and gsz > 0:
-                # 官方数据有效，直接使用
-                pass
-            elif phase in ['PRE_MARKET', 'WEEKEND']:
-                # 非交易时间，不强求实时数据
-                if gsz <= 0 and last_nav > 0:
-                    res['gsz'] = str(last_nav)
-                    res['gszzl'] = "0.00"
-            elif phase == 'POST_MARKET':
-                # 盘后，如果数据还没更新（日期不是今天），且gsz无效，尝试计算
-                if res.get('jzrq') != today_str and gsz <= 0:
-                    need_manual = True
+            # 策略：
+            # 1. 如果 source 是 official_realtime:
+            #    - 如果 gsz > 0，直接用。
+            #    - 如果 gsz <= 0 但 gszzl != 0 且 last_nav > 0，则反推 gsz = last_nav * (1 + gszzl/100)。
+            #    - 如果 gsz <= 0 且 gszzl == 0:
+            #      - 盘中 (MARKET, PRE_MARKET)：强制手动计算。
+            #      - 盘后 (POST_MARKET)：如果 last_date 不是今天，尝试手动计算；否则认为今天涨跌就是0。
+            # 2. 如果 source 是 none，强制手动计算。
+
+            if source == 'official_realtime':
+                if gsz > 0:
+                    pass
+                elif gszzl != 0 and last_nav > 0:
+                     # 反推
+                     new_gsz = last_nav * (1 + gszzl / 100.0)
+                     res['gsz'] = "{:.4f}".format(new_gsz)
+                else:
+                    # gsz=0, gszzl=0
+                    if phase == 'MARKET' or phase == 'PRE_MARKET' or phase == 'LUNCH_BREAK':
+                         need_manual = True
+                    elif phase == 'POST_MARKET':
+                         if res.get('jzrq') != today_str:
+                             need_manual = True
             else:
-                # 盘中: 如果官方数据无效，强制计算
-                if gsz <= 0:
-                    need_manual = True
+                need_manual = True
             
             if need_manual:
                 calc_needed.append(code)
@@ -471,7 +481,6 @@ class FundController:
         # 2. 批量手动计算 (仅针对无官方数据的基金)
         if calc_needed:
             # A. 获取持仓
-            # 检查缓存
             codes_to_fetch_h = [c for c in calc_needed if not cache_service.get_holdings(c)]
             if codes_to_fetch_h:
                  h_tasks = [run_in_threadpool(AkshareService.fetch_holdings_sync, c) for c in codes_to_fetch_h]
@@ -515,7 +524,7 @@ class FundController:
                     est_val = last_n * (1 + est_chg / 100.0)
                     data['gsz'] = "{:.4f}".format(est_val)
                     data['gszzl'] = "{:.2f}".format(est_chg)
-                    data['source'] = 'holdings_calc'
+                    data['source'] = 'holdings_calc_batch'
 
         return [results_map[c] for c in codes]
 
@@ -550,7 +559,7 @@ def status():
     return {
         "phase": AkshareService.get_time_phase(), 
         "ts": datetime.now().timestamp(),
-        "backend": "akshare_fix_v6"
+        "backend": "akshare_fix_v7"
     }
 
 @router.get("/search")
