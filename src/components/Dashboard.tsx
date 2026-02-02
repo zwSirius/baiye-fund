@@ -181,7 +181,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       </div>
 
       {/* Compact Asset Card */}
-      <div className="mx-4 relative overflow-hidden rounded-xl shadow-lg transition-all duration-300 group ring-1 ring-white/10 pb-8">
+      <div className="mx-4 relative overflow-hidden rounded-xl shadow-lg transition-all duration-300 group ring-1 ring-white/10">
         <div className={`absolute inset-0 ${
              isSummary 
              ? 'bg-gradient-to-br from-indigo-500 via-purple-600 to-indigo-900' 
@@ -230,8 +230,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </div>
             </div>
             
-             <div className="absolute top-4 right-4 text-[9px] text-white/40 font-medium">
-                 {lastUpdate.toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'})}
+             <div className="flex justify-end mt-2">
+                 <span className="text-[9px] text-white/50 font-medium">
+                     更新时间：{lastUpdate.toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'})}
+                 </span>
             </div>
         </div>
       </div>
