@@ -1,59 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Fund, Transaction } from '../types';
-import { Calendar, History, Loader2, ArrowRight } from 'lucide-react';
+import { Fund } from '../types';
+import { Calendar, Loader2 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { BacktestDashboard } from './BacktestDashboard';
 import { getFundHistoryData } from '../services/fundService';
 
-interface ToolsDashboardProps {
+interface ProfitCalendarProps {
     funds: Fund[];
 }
 
-export const ToolsDashboard: React.FC<ToolsDashboardProps> = ({ funds }) => {
-    const [activeTool, setActiveTool] = useState<'CALENDAR' | 'BACKTEST'>('CALENDAR');
-
-    return (
-        <div className="pb-24 animate-fade-in">
-             <div className="bg-white dark:bg-slate-900 sticky top-[72px] z-20 border-b border-slate-100 dark:border-slate-800 px-4 pt-2">
-                 <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
-                     <ToolTab 
-                        isActive={activeTool === 'CALENDAR'} 
-                        onClick={() => setActiveTool('CALENDAR')} 
-                        icon={<Calendar size={16}/>} 
-                        label="收益日历"
-                     />
-                     <ToolTab 
-                        isActive={activeTool === 'BACKTEST'} 
-                        onClick={() => setActiveTool('BACKTEST')} 
-                        icon={<History size={16}/>} 
-                        label="组合回测"
-                     />
-                 </div>
-             </div>
-
-             <div className="p-4">
-                 {activeTool === 'CALENDAR' && <ProfitCalendar funds={funds} />}
-                 {activeTool === 'BACKTEST' && <BacktestDashboard availableFunds={funds} />}
-             </div>
-        </div>
-    );
-};
-
-const ToolTab = ({ isActive, onClick, icon, label }: any) => (
-    <button 
-        onClick={onClick}
-        className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-bold whitespace-nowrap transition ${
-            isActive 
-            ? 'bg-blue-600 text-white shadow-md' 
-            : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
-        }`}
-    >
-        {icon} {label}
-    </button>
-);
-
-// --- 真实收益日历 (基于交易记录) ---
-const ProfitCalendar = ({ funds }: { funds: Fund[] }) => {
+export const ProfitCalendar: React.FC<ProfitCalendarProps> = ({ funds }) => {
     const [view, setView] = useState<'DAY' | 'WEEK' | 'MONTH' | 'YEAR'>('DAY');
     const [chartData, setChartData] = useState<any[]>([]);
     const [totalProfit, setTotalProfit] = useState(0);
@@ -97,6 +52,8 @@ const ProfitCalendar = ({ funds }: { funds: Fund[] }) => {
                 const todayStr = today.toISOString().split('T')[0];
                 let todayTotal = 0;
                 holdingFunds.forEach(f => todayTotal += f.estimatedProfit);
+                
+                // 只有在非周末/节假日或者有预估收益时才添加今日
                 if (Math.abs(todayTotal) > 0.01) {
                     dailyProfits[todayStr] = todayTotal;
                 }
@@ -163,26 +120,24 @@ const ProfitCalendar = ({ funds }: { funds: Fund[] }) => {
 
                 // 4. 聚合数据
                 const aggregatedData: any[] = [];
-                let aggregatedTotal = 0;
                 
                 if (view === 'DAY') {
-                    for (let i = 13; i >= 0; i--) {
+                    for (let i = 29; i >= 0; i--) {
                         const d = new Date();
                         d.setDate(d.getDate() - i);
                         const dStr = d.toISOString().split('T')[0];
                         const val = dailyProfits[dStr] || 0;
                         aggregatedData.push({
-                            name: `${d.getMonth() + 1}-${d.getDate()}`,
+                            name: `${d.getMonth() + 1}/${d.getDate()}`,
                             fullDate: dStr,
                             value: Math.round(val)
                         });
-                        aggregatedTotal += val;
                     }
                 } else if (view === 'WEEK') {
                      const weekMap: {[key: string]: number} = {};
                      const weeks: string[] = [];
                      
-                     for (let i = 0; i < 60; i++) {
+                     for (let i = 0; i < 90; i++) {
                          const d = new Date();
                          d.setDate(d.getDate() - i);
                          const dStr = d.toISOString().split('T')[0];
@@ -252,19 +207,23 @@ const ProfitCalendar = ({ funds }: { funds: Fund[] }) => {
         };
 
         calculateHistory();
-    }, [holdingFunds, view, hasTransactions]);
+    }, [holdingFunds, view, hasTransactions, funds]);
 
     if (!hasTransactions) {
         return (
-            <div className="flex flex-col items-center justify-center h-64 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
-                <Calendar size={48} className="text-slate-200 dark:text-slate-700 mb-4"/>
-                <p className="text-slate-500 font-bold">暂无收益数据</p>
-                <p className="text-xs text-slate-400 mt-2">请先添加持仓并记录交易历史</p>
+            <div className="flex flex-col items-center justify-center h-[60vh] text-slate-400">
+                <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
+                     <Calendar size={24} className="opacity-50"/>
+                </div>
+                <p className="font-bold mb-2">暂无收益历史</p>
+                <p className="text-xs text-slate-400 text-center max-w-[200px]">
+                    添加持仓并记录买入时间后，此处将展示您的收益曲线。
+                </p>
             </div>
         )
     }
 
-    const labelMap = {
+    const labelMap: {[key: string]: string} = {
         'DAY': '当日收益',
         'WEEK': '本周收益',
         'MONTH': '本月收益',
@@ -272,13 +231,15 @@ const ProfitCalendar = ({ funds }: { funds: Fund[] }) => {
     };
 
     return (
-        <div className="space-y-4 animate-slide-up">
-            <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
+        <div className="space-y-4 animate-fade-in p-4 pb-24">
+            <h2 className="text-lg font-bold text-slate-800 dark:text-slate-100">收益日历</h2>
+            
+            <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
                 {['DAY', 'WEEK', 'MONTH', 'YEAR'].map((v) => (
                     <button
                         key={v}
                         onClick={() => setView(v as any)}
-                        className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${
+                        className={`flex-1 py-2 text-xs font-bold rounded-lg transition ${
                             view === v 
                             ? 'bg-white dark:bg-slate-700 shadow text-blue-600 dark:text-blue-400' 
                             : 'text-slate-400'
@@ -289,28 +250,42 @@ const ProfitCalendar = ({ funds }: { funds: Fund[] }) => {
                 ))}
             </div>
 
-            <div className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl p-6 text-white shadow-lg relative overflow-hidden">
+            <div className="bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl p-6 text-white shadow-xl relative overflow-hidden">
                 {loading && <div className="absolute top-2 right-2"><Loader2 className="animate-spin opacity-50" size={16}/></div>}
-                <div className="text-indigo-100 text-xs mb-1">{labelMap[view]} (基于交易记录)</div>
-                <div className="text-3xl font-bold flex items-center gap-2">
-                    {totalProfit > 0 ? '+' : ''}{totalProfit.toLocaleString()} <span className="text-sm font-normal opacity-80">元</span>
+                
+                <div className="relative z-10">
+                    <div className="text-indigo-100 text-xs mb-1 font-medium">{labelMap[view]}</div>
+                    <div className="text-3xl font-black flex items-center gap-2">
+                        {totalProfit > 0 ? '+' : ''}{totalProfit.toLocaleString()} <span className="text-sm font-normal opacity-80">元</span>
+                    </div>
                 </div>
+
+                 {/* Background decoration */}
+                 <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-white/10 rounded-full blur-2xl"></div>
+                 <div className="absolute bottom-0 left-0 -mb-4 -ml-4 w-20 h-20 bg-indigo-900/20 rounded-full blur-2xl"></div>
             </div>
 
-            <div className="bg-white dark:bg-slate-900 rounded-xl p-4 shadow-sm border border-slate-100 dark:border-slate-800 h-64 relative">
+            <div className="bg-white dark:bg-slate-900 rounded-2xl p-4 shadow-sm border border-slate-100 dark:border-slate-800 h-72 relative">
                 {loading ? (
                     <div className="absolute inset-0 flex items-center justify-center text-slate-400 text-xs">
-                        <Loader2 className="animate-spin mr-2" size={16}/> 计算收益历史...
+                        <Loader2 className="animate-spin mr-2" size={16}/> 正在计算历史收益...
                     </div>
                 ) : (
                     <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={chartData}>
-                            <XAxis dataKey="name" tick={{fontSize: 10}} axisLine={false} tickLine={false} />
+                        <BarChart data={chartData} margin={{top: 10, right: 0, left: 0, bottom: 0}}>
+                            <XAxis 
+                                dataKey="name" 
+                                tick={{fontSize: 9, fill: '#94a3b8'}} 
+                                axisLine={false} 
+                                tickLine={false}
+                                interval={view === 'DAY' ? 2 : 0}
+                            />
                             <YAxis hide />
                             <Tooltip 
-                                cursor={{fill: 'transparent'}}
-                                contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)'}}
-                                formatter={(val: number) => [`${val}元`, '盈亏']}
+                                cursor={{fill: 'rgba(0,0,0,0.02)'}}
+                                contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)', fontSize: '12px'}}
+                                formatter={(val: number) => [`${val > 0 ? '+' : ''}${val}元`, '盈亏']}
+                                labelStyle={{color: '#64748b', marginBottom: '4px'}}
                             />
                             <Bar dataKey="value" radius={[4, 4, 4, 4]}>
                                 {chartData.map((entry, index) => (
@@ -322,8 +297,9 @@ const ProfitCalendar = ({ funds }: { funds: Fund[] }) => {
                 )}
             </div>
             
-            <div className="text-xs text-slate-400 text-center px-4">
-                * 仅统计添加持仓后的收益情况，添加前的历史波动不计入。
+            <div className="text-[10px] text-slate-400 text-center px-4 leading-relaxed">
+                * 收益统计基于您记录的交易历史数据回溯计算。<br/>
+                * “日”视图显示近30天，“周”视图显示近8周。
             </div>
         </div>
     );

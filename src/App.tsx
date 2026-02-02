@@ -7,9 +7,7 @@ import { useFund } from './contexts/FundContext';
 
 // Components
 import { Dashboard } from './components/Dashboard';
-import { MarketSentiment } from './components/MarketSentiment';
 import { BacktestDashboard } from './components/BacktestDashboard';
-import { ToolsDashboard } from './components/ToolsDashboard';
 import { AIModal } from './components/AIModal';
 import { FundDetail } from './components/FundDetail';
 import { FundFormModal } from './components/FundFormModal';
@@ -17,19 +15,21 @@ import { TransactionModal } from './components/TransactionModal';
 import { AIChat } from './components/AIChat';
 import { Watchlist } from './components/Watchlist';
 import { MarketConfigModal } from './components/MarketConfigModal';
+import { ProfitCalendar } from './components/ProfitCalendar';
+import { MarketDashboard } from './components/MarketDashboard';
 
 // Icons
-import { LayoutGrid, PieChart, Settings, Bot, Plus, Moon, Sun, Monitor, Download, Upload, Clipboard, ClipboardPaste, Users, X, Eye, EyeOff, PenTool, Key, BarChart3 } from 'lucide-react';
+import { LayoutGrid, Settings, Bot, Plus, Moon, Sun, Monitor, Download, Upload, Clipboard, ClipboardPaste, Users, X, Eye, EyeOff, Key, BarChart3, Calendar } from 'lucide-react';
 
 const NavBtn = ({ icon, label, isActive, onClick }: any) => (
     <button 
         onClick={onClick} 
-        className={`flex flex-col items-center justify-center w-14 h-full transition duration-300 relative ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 hover:text-slate-600'}`}
+        className={`flex flex-col items-center justify-center min-w-[3.5rem] h-full transition duration-300 relative ${isActive ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 hover:text-slate-600'}`}
     >
         <div className={`transition-transform duration-300 ${isActive ? '-translate-y-1' : ''}`}>
-             {React.cloneElement(icon, { strokeWidth: isActive ? 2.5 : 2, size: 24 })}
+             {React.cloneElement(icon, { strokeWidth: isActive ? 2.5 : 2, size: 22 })}
         </div>
-        <span className={`text-[10px] font-medium absolute bottom-3 transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-0 translate-y-2'}`}>
+        <span className={`text-[9px] font-medium absolute bottom-3 transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-0 translate-y-2'}`}>
             {label}
         </span>
     </button>
@@ -37,9 +37,9 @@ const NavBtn = ({ icon, label, isActive, onClick }: any) => (
 
 const App: React.FC = () => {
   const { 
-    funds, groups, marketCodes, sectorIndices, isRefreshing, lastUpdate,
+    funds, groups, marketCodes, isRefreshing, lastUpdate,
     refreshData, addOrUpdateFund, removeFund, addGroup, removeGroup, updateMarketCodes,
-    getFundsByGroup, getTotalAssets 
+    getFundsByGroup
   } = useFund();
 
   const [activeTab, setActiveTab] = useState<TabView>(TabView.DASHBOARD);
@@ -71,8 +71,21 @@ const App: React.FC = () => {
   const [aiReport, setAiReport] = useState("");
   const [currentAnalyzingFund, setCurrentAnalyzingFund] = useState<string>("");
 
-  const totals = getTotalAssets();
   const visibleDashboardFunds = getFundsByGroup(currentGroupId);
+  
+  const currentGroupTotals = useMemo(() => {
+    let totalProfit = 0;
+    let totalMarketValue = 0;
+    let totalReturn = 0;
+    visibleDashboardFunds.forEach(f => {
+         totalProfit += f.estimatedProfit;
+         totalMarketValue += (f.estimatedNav * f.holdingShares);
+         const costValue = f.holdingCost * f.holdingShares;
+         totalReturn += ((f.estimatedNav * f.holdingShares) - costValue + (f.realizedProfit || 0));
+    });
+    return { totalProfit, totalMarketValue, totalReturn };
+  }, [visibleDashboardFunds]);
+
   const watchlistFunds = funds.filter(f => f.isWatchlist || f.holdingShares === 0);
   
   const editingFund = useMemo(() => funds.find(f => f.id === editingFundId) || null, [funds, editingFundId]);
@@ -182,15 +195,10 @@ const App: React.FC = () => {
       }
   };
 
-  const marketAvgChange = sectorIndices.length > 0 
-     ? sectorIndices.reduce((acc, s) => acc + s.changePercent, 0) / sectorIndices.length 
-     : 0;
-  const sentimentScore = Math.min(100, Math.max(0, 50 + marketAvgChange * 20));
-
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans max-w-md mx-auto shadow-2xl relative overflow-hidden transition-colors pb-24">
       {/* Header */}
-      <header className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md px-5 pt-12 pb-3 sticky top-0 z-20 flex justify-between items-center transition-colors">
+      <header className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md px-5 pt-12 pb-3 sticky top-0 z-20 flex justify-between items-center transition-colors border-b border-transparent dark:border-slate-800">
         <div className="flex items-center gap-2">
             <div>
                 <h1 className="text-xl font-black text-slate-800 dark:text-white tracking-tight flex items-center gap-1">
@@ -217,8 +225,8 @@ const App: React.FC = () => {
                 funds={visibleDashboardFunds}
                 groups={groups}
                 currentGroupId={currentGroupId}
-                totalProfit={totals.totalProfit}
-                totalMarketValue={totals.totalMarketValue}
+                totalProfit={currentGroupTotals.totalProfit}
+                totalMarketValue={currentGroupTotals.totalMarketValue}
                 lastUpdate={lastUpdate}
                 isRefreshing={isRefreshing}
                 isPrivacyMode={isPrivacyMode}
@@ -228,6 +236,10 @@ const App: React.FC = () => {
                 onGroupChange={setCurrentGroupId}
                 onManageGroups={() => setIsManageGroupsOpen(true)}
             />
+        )}
+        
+        {activeTab === TabView.CALENDAR && (
+            <ProfitCalendar funds={funds} />
         )}
         
         {activeTab === TabView.WATCHLIST && (
@@ -242,41 +254,9 @@ const App: React.FC = () => {
         )}
 
         {activeTab === TabView.MARKET && (
-            <div className="space-y-6 mt-6 pb-24">
-                <MarketSentiment data={[
-                    { name: '恐慌', value: 30, color: '#10b981' }, 
-                    { name: '中性', value: 40, color: '#f59e0b' }, 
-                    { name: '贪婪', value: 30, color: '#f43f5e' }, 
-                ]} score={Math.round(sentimentScore)} />
-                
-                <div className="px-4">
-                     <div className="flex justify-between items-center mb-4">
-                         <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-                             <span>市场核心指数</span>
-                         </h3>
-                         <button onClick={() => setIsMarketConfigOpen(true)} className="text-xs text-blue-500 font-bold flex items-center gap-1 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded-md">
-                            <Settings size={12} /> 自定义
-                         </button>
-                     </div>
-                     <div className="grid grid-cols-2 gap-3">
-                         {sectorIndices.map((sector) => (
-                             <div key={sector.name} className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 flex justify-between items-center">
-                                 <div>
-                                     <div className="text-sm font-bold text-slate-700 dark:text-slate-200">{sector.name}</div>
-                                     <div className="text-[10px] text-slate-400 mt-1">热度: {sector.score}</div>
-                                 </div>
-                                 <div className={`text-lg font-black ${sector.changePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                                     {sector.changePercent > 0 ? '+' : ''}{sector.changePercent}%
-                                 </div>
-                             </div>
-                         ))}
-                     </div>
-                </div>
-            </div>
+            <MarketDashboard marketCodes={marketCodes} onConfigMarket={() => setIsMarketConfigOpen(true)} />
         )}
-
-        {activeTab === TabView.TOOLS && <ToolsDashboard funds={funds} />}
-        {activeTab === TabView.BACKTEST && <BacktestDashboard availableFunds={funds} />}
+        
         {activeTab === TabView.AI_INSIGHTS && <AIChat onGoToSettings={goToSettings} />}
         
         {activeTab === TabView.SETTINGS && (
@@ -316,6 +296,11 @@ const App: React.FC = () => {
                             </button>
                         </div>
                     </div>
+                    
+                    <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 p-5">
+                        <div className="font-bold mb-4">高级功能</div>
+                        <BacktestDashboard availableFunds={funds} />
+                    </div>
 
                     <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 p-5">
                         <div className="font-bold mb-4">数据管理</div>
@@ -338,18 +323,16 @@ const App: React.FC = () => {
         )}
       </main>
 
-      {/* Nav */}
-      <nav className="fixed bottom-6 left-1/2 transform -translate-x-1/2 w-[90%] max-w-[360px] bg-white/90 backdrop-blur-xl dark:bg-slate-800/90 border border-white/20 dark:border-slate-700 rounded-full h-[64px] flex justify-around items-center px-2 z-40 shadow-2xl shadow-slate-200/50 dark:shadow-black/50">
-        <NavBtn icon={<LayoutGrid />} label="资产" isActive={activeTab === TabView.DASHBOARD} onClick={() => setActiveTab(TabView.DASHBOARD)} />
-        <NavBtn icon={<Eye />} label="自选" isActive={activeTab === TabView.WATCHLIST} onClick={() => setActiveTab(TabView.WATCHLIST)} />
-        <button 
-             onClick={() => setActiveTab(TabView.AI_INSIGHTS)} 
-             className="relative -top-6 bg-gradient-to-br from-indigo-500 to-purple-600 text-white rounded-full p-4 shadow-lg shadow-indigo-500/30 active:scale-95 transition hover:scale-105"
-        >
-             <Bot size={28} />
-        </button>
-        <NavBtn icon={<BarChart3 />} label="市场" isActive={activeTab === TabView.MARKET} onClick={() => setActiveTab(TabView.MARKET)} />
-        <NavBtn icon={<Settings />} label="设置" isActive={activeTab === TabView.SETTINGS} onClick={() => setActiveTab(TabView.SETTINGS)} />
+      {/* Nav - Scrollable for 6 items */}
+      <nav className="fixed bottom-6 left-1/2 transform -translate-x-1/2 w-[90%] max-w-[380px] bg-white/90 backdrop-blur-xl dark:bg-slate-800/90 border border-white/20 dark:border-slate-700 rounded-full h-[64px] flex items-center px-1 z-40 shadow-2xl shadow-slate-200/50 dark:shadow-black/50 overflow-x-auto no-scrollbar">
+        <div className="flex w-full justify-between px-2">
+            <NavBtn icon={<LayoutGrid />} label="资产" isActive={activeTab === TabView.DASHBOARD} onClick={() => setActiveTab(TabView.DASHBOARD)} />
+            <NavBtn icon={<Eye />} label="自选" isActive={activeTab === TabView.WATCHLIST} onClick={() => setActiveTab(TabView.WATCHLIST)} />
+            <NavBtn icon={<Calendar />} label="日历" isActive={activeTab === TabView.CALENDAR} onClick={() => setActiveTab(TabView.CALENDAR)} />
+            <NavBtn icon={<BarChart3 />} label="市场" isActive={activeTab === TabView.MARKET} onClick={() => setActiveTab(TabView.MARKET)} />
+            <NavBtn icon={<Bot />} label="AI" isActive={activeTab === TabView.AI_INSIGHTS} onClick={() => setActiveTab(TabView.AI_INSIGHTS)} />
+            <NavBtn icon={<Settings />} label="设置" isActive={activeTab === TabView.SETTINGS} onClick={() => setActiveTab(TabView.SETTINGS)} />
+        </div>
       </nav>
 
       {/* Import Modal */}

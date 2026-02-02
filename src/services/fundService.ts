@@ -1,7 +1,18 @@
-import { Fund, SectorIndex, BacktestResult, BacktestPoint } from '../types';
+import { Fund, SectorIndex, BacktestResult, BacktestPoint, MarketOverview } from '../types';
 import { calculateFundMetrics } from '../utils/finance';
 
-export const API_BASE = import.meta.env.VITE_API_BASE || '';
+// Robustly access environment variables
+let apiBaseUrl = '';
+try {
+    const env = import.meta.env;
+    if (env && env.VITE_API_BASE) {
+        apiBaseUrl = env.VITE_API_BASE;
+    }
+} catch (e) {
+    console.warn('Failed to access environment variables:', e);
+}
+
+export const API_BASE = apiBaseUrl;
 
 const STORAGE_KEY_FUNDS = 'smartfund_funds_v1';
 const STORAGE_KEY_GROUPS = 'smartfund_groups_v1';
@@ -38,8 +49,8 @@ export const getStoredMarketCodes = (): string[] => {
     if (stored) {
         return JSON.parse(stored);
     }
-    // 默认指数: 上证, 深证, 创业板, 科创50, 沪深300
-    return ["1.000001", "0.399001", "0.399006", "1.000688", "0.000300"];
+    // 默认指数
+    return ["1.000001", "0.399001", "0.399006", "1.000688", "100.HSI", "100.NDX"];
 };
 
 export const saveMarketCodes = (codes: string[]) => {
@@ -142,6 +153,7 @@ export const fetchFundDetails = async (fund: Fund): Promise<Fund> => {
         return {
             ...fund,
             manager: data.manager || fund.manager,
+            type: data.type || fund.type,
             holdings: Array.isArray(data.holdings) ? data.holdings.map((h: any) => ({
                 code: h.code,
                 name: h.name,
@@ -167,18 +179,26 @@ export const getFundHistoryData = async (fundCode: string) => {
     }
 };
 
-export const fetchMarketIndices = async (codes?: string[]): Promise<SectorIndex[]> => {
+export const fetchMarketOverview = async (codes?: string[]): Promise<MarketOverview | null> => {
     try {
-        let url = `${API_BASE}/api/market`;
+        let url = `${API_BASE}/api/market/overview`;
         if (codes && codes.length > 0) {
             url += `?codes=${codes.join(',')}`;
         }
         const response = await fetch(url);
         if (!response.ok) throw new Error("Market fetch failed");
-        const data = await response.json();
-        return data;
+        return await response.json();
     } catch (e) {
-        console.warn("Market indices fetch failed:", e);
+        console.warn("Market overview fetch failed:", e);
+        return null;
+    }
+};
+
+export const fetchMarketIndices = async (codes: string[]): Promise<SectorIndex[]> => {
+    try {
+        const overview = await fetchMarketOverview(codes);
+        return overview ? overview.indices : [];
+    } catch (e) {
         return [];
     }
 };
@@ -216,12 +236,11 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
         const apiGsz = parseFloat(realData.gsz);
         const apiGszZl = parseFloat(realData.gszzl);
 
-        // 1. 更新昨日净值 (作为基准)
+        // 1. 更新昨日净值
         if (!isNaN(apiDwjz) && apiDwjz > 0) {
             lastNav = apiDwjz;
             if (realData.jzrq) lastNavDate = realData.jzrq;
         } else if (lastNav === 0 && !isNaN(apiGsz) && apiGsz > 0) {
-            // 初始化：如果没有昨日净值，暂时用估值填充
             lastNav = apiGsz; 
         }
 
@@ -230,17 +249,13 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
             estimatedNav = apiGsz;
             estimatedChangePercent = isNaN(apiGszZl) ? 0 : apiGszZl;
         } else if (lastNav > 0) {
-            // 如果没估值，默认显示净值
             estimatedNav = lastNav;
             estimatedChangePercent = 0;
         }
 
-        // 3. 处理估值更新时间
-        if (source === 'official_realtime') {
-            estimateTime = realData.gztime || "";
-        } else if (source === 'holdings_calc_batch') {
-            const now = new Date();
-            estimateTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+        // 3. 处理时间
+        if (realData.gztime) {
+            estimateTime = realData.gztime;
         }
 
         if (realData.name && realData.name.length > 0) {

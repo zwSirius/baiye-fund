@@ -25,21 +25,22 @@ export interface Group {
 }
 
 export interface Fund {
-  id: string; // Unique ID (composite of code + groupId to allow same fund in diff groups)
+  id: string; // Unique ID
   code: string;
   name: string;
   manager: string;
   lastNav: number; // 昨日净值
   lastNavDate: string;
   holdings: Stock[]; // 十大重仓
-  tags: string[]; // e.g. "科技", "白酒", "高风险"
+  tags: string[]; // e.g. "科技", "白酒"
+  type?: string; // e.g. "混合型", "指数型"
   
   // Real-time calculated fields
   estimatedNav: number;
   estimatedChangePercent: number;
   estimatedProfit: number; // 今日预估盈亏
   estimateTime?: string; // 估值更新时间 e.g. "14:30"
-  source?: string; // "official" | "holdings_calc"
+  source?: string; // "official" | "holdings_calc" | "official_final"
   
   // User specific
   groupId: string; // 所属分组ID
@@ -52,25 +53,42 @@ export interface Fund {
 
 export interface SectorIndex {
   name: string;
-  code: string; // Add code to track it
+  code: string;
   changePercent: number;
   score: number; // 0-100 hot score
-  leadingStock: string; // 领涨股
   value?: number; // 当前点位
 }
 
-export interface MarketSentiment {
-  score: number; // 0-100
-  status: 'Fear' | 'Neutral' | 'Greed';
-  description: string;
+export interface SectorRank {
+    name: string;
+    changePercent: number;
+    leadingStock: string;
+}
+
+export interface FundRank {
+    code: string;
+    name: string;
+    changePercent: number;
+    nav: number;
+}
+
+export interface MarketOverview {
+    indices: SectorIndex[];
+    sectors: {
+        top: SectorRank[];
+        bottom: SectorRank[];
+    };
+    fundRankings: {
+        gainers: FundRank[];
+        losers: FundRank[];
+    }
 }
 
 export enum TabView {
   DASHBOARD = 'DASHBOARD',
-  WATCHLIST = 'WATCHLIST', // 新增自选页
+  WATCHLIST = 'WATCHLIST',
+  CALENDAR = 'CALENDAR',
   MARKET = 'MARKET',
-  TOOLS = 'TOOLS',
-  BACKTEST = 'BACKTEST',
   AI_INSIGHTS = 'AI_INSIGHTS',
   SETTINGS = 'SETTINGS'
 }
