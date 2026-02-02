@@ -9,7 +9,7 @@ interface MarketConfigModalProps {
 }
 
 // 预置的热门板块/指数代码
-// 使用更稳定的官方指数代码 (中证/国证/交易所核心指数)
+// 使用更稳定的官方指数代码 (SecID 格式)
 const PRESETS = [
     // --- 大盘 ---
     { name: '上证指数', code: '1.000001', category: '大盘' },
@@ -19,19 +19,19 @@ const PRESETS = [
     { name: '北证50', code: '0.899050', category: '大盘' },
     { name: '沪深300', code: '1.000300', category: '大盘' },
     
-    // --- 行业 (优先使用中证/国证指数，更稳定) ---
+    // --- 行业 (优先使用中证/国证指数) ---
     { name: '中证白酒', code: '0.399997', category: '行业' },
     { name: '中证医疗', code: '0.399989', category: '行业' },
     { name: '新能源车', code: '0.399976', category: '行业' },
-    { name: '半导体', code: '1.000997', category: '行业' }, // 中证全指半导体
-    { name: '光伏产业', code: '1.931151', category: '行业' }, // 中证光伏
-    { name: '人工智能', code: '1.931071', category: '行业' }, // 中证人工智能
+    { name: '半导体', code: '1.000997', category: '行业' },
+    { name: '光伏产业', code: '1.931151', category: '行业' },
+    { name: '人工智能', code: '1.931071', category: '行业' },
     { name: '证券公司', code: '0.399975', category: '行业' },
     { name: '中证银行', code: '0.399986', category: '行业' },
     { name: '中证军工', code: '0.399967', category: '行业' },
     { name: '煤炭指数', code: '0.399998', category: '行业' },
     
-    // --- 港美 ---
+    // --- 港美 (使用 100 市场代码 或 116) ---
     { name: '恒生指数', code: '100.HSI', category: '港美' },
     { name: '恒生科技', code: '100.HSTECH', category: '港美' },
     { name: '纳斯达克', code: '100.NDX', category: '港美' },
@@ -41,7 +41,6 @@ const PRESETS = [
 export const MarketConfigModal: React.FC<MarketConfigModalProps> = ({ isOpen, onClose, currentCodes, onSave }) => {
     const [selected, setSelected] = useState<string[]>([]);
 
-    // 核心修复：每次打开弹窗时，强制同步父组件的配置
     useEffect(() => {
         if (isOpen) {
             setSelected(currentCodes);
@@ -67,7 +66,6 @@ export const MarketConfigModal: React.FC<MarketConfigModalProps> = ({ isOpen, on
 
     if (!isOpen) return null;
 
-    // Group by category
     const categories = ['大盘', '行业', '港美'];
 
     return (

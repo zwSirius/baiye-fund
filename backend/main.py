@@ -220,6 +220,10 @@ class AkshareService:
 
     @staticmethod
     def fetch_stock_quotes_sync(codes: List[str]) -> Dict[str, Dict[str, float]]:
+        """
+        Robust Real-time Quote Fetcher.
+        Handles: A-Shares, ETF (51/15), HK Stocks (116), Indices (100/1/0)
+        """
         if not codes: return {}
         unique = list(set([c.strip() for c in codes if c.strip()]))
         quotes = {}
@@ -230,31 +234,47 @@ class AkshareService:
             secids = []
             
             for c in batch:
+                # 1. Already formatted secid (e.g. "1.000001" passed from frontend)
+                if '.' in c:
+                    secids.append(c)
+                    continue
+
+                # 2. Logic for raw codes
                 prefix = "0"
+                
+                # Length 6: A-Share / ETF / Index
                 if len(c) == 6:
-                    if c.startswith('6') or c.startswith('9'): 
+                    # Shanghai: 6(Stock), 9(B), 5(Fund/ETF), 000(Index)
+                    if c.startswith('6') or c.startswith('9') or c.startswith('5') or c.startswith('000'): 
                         prefix = "1"
-                    elif c.startswith('51') or c.startswith('56') or c.startswith('58'):
-                        prefix = "1"
-                    elif c.startswith('15'):
+                    # Shenzhen: 0(Stock), 3(Stock), 1(Fund/ETF/Bond), 399(Index)
+                    elif c.startswith('0') or c.startswith('3') or c.startswith('1') or c.startswith('399'):
                         prefix = "0"
-                    elif c.startswith('11') or c.startswith('12') or c.startswith('13'):
-                        prefix = "0"
+                    # Beijing: 8, 4
                     elif c.startswith('8') or c.startswith('4'):
                         prefix = "0"
                     else:
-                        prefix = "0"
-                elif len(c) == 5:
+                        prefix = "0" # Default fallback
+                
+                # Length 5: HK Stocks (e.g. 00700)
+                elif len(c) == 5 and c.isdigit():
                     prefix = "116"
+                
+                # Short codes (e.g. 700 -> 00700 HK)
                 elif len(c) < 5 and c.isdigit():
                     c = c.zfill(5)
                     prefix = "116"
+                
+                # Non-digit: Global Indices likely (HSI, NDX)
+                elif not c.isdigit():
+                    prefix = "100"
                 
                 secids.append(f"{prefix}.{c}")
             
             if not secids: continue
 
-            url = f"http://6.push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f2,f3,f12,f14&secids={','.join(secids)}"
+            # Using push2.eastmoney.com (Stable endpoint)
+            url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f2,f3,f12,f14&secids={','.join(secids)}"
             try:
                 resp = GlobalSession.get().get(url, headers=AkshareService.get_quote_headers(), timeout=4.0)
                 data = resp.json()
@@ -264,9 +284,25 @@ class AkshareService:
                         
                     for item in diff:
                         ret_code = str(item['f12'])
+                        
+                        price = item['f2']
+                        change = item['f3']
+                        
+                        # Handle invalid data
+                        final_price = 0.0
+                        final_change = 0.0
+                        
+                        if price != '-':
+                            try: final_price = float(price)
+                            except: pass
+                        
+                        if change != '-':
+                            try: final_change = float(change)
+                            except: pass
+                        
                         quotes[ret_code] = {
-                            "price": float(item['f2']) if item['f2'] != '-' else 0.0,
-                            "change": float(item['f3']) if item['f3'] != '-' else 0.0
+                            "price": final_price,
+                            "change": final_change
                         }
             except Exception as e: 
                 logger.error(f"Quote fetch error for batch {batch}: {e}")
@@ -342,9 +378,11 @@ class FundController:
             quotes = await run_in_threadpool(AkshareService.fetch_stock_quotes_sync, [h['code'] for h in holdings])
             for h in holdings: 
                 q = quotes.get(h['code'])
+                # Fuzzy match for HK stocks (e.g. holdings says 700, quote has 00700)
                 if not q and h['code'].isdigit():
-                    q = quotes.get(str(int(h['code'])))
-                    if not q: q = quotes.get(h['code'].zfill(5))
+                    q = quotes.get(h['code'].zfill(5)) # Try 00700
+                    if not q:
+                         q = quotes.get(str(int(h['code']))) # Try 700
                          
                 if q:
                     h['changePercent'] = q['change']
@@ -433,6 +471,7 @@ class FundController:
                 fund_holdings_map[c] = h
                 all_target_codes.extend([x['code'] for x in h])
             
+            # Fetch Quotes (Using Improved Logic)
             quotes = await run_in_threadpool(AkshareService.fetch_stock_quotes_sync, all_target_codes)
             
             for c in calc_needed:
@@ -447,9 +486,11 @@ class FundController:
                 for h in holdings:
                     w = h['percent']
                     q = quotes.get(h['code'])
+                    
+                    # Fuzzy match
                     if not q and h['code'].isdigit():
-                        q = quotes.get(str(int(h['code'])))
-                        if not q: q = quotes.get(h['code'].zfill(5))
+                         q = quotes.get(h['code'].zfill(5))
+                         if not q: q = quotes.get(str(int(h['code'])))
                     
                     change = q['change'] if q else 0
                     weighted_change += (change * w)
@@ -504,21 +545,43 @@ async def search(key: str = Query(..., min_length=1)):
 
 @router.get("/market")
 async def market(codes: str = Query(None)):
-    # Default to Shanghai & Shenzhen Component Index
     target_codes = codes.split(',') if codes else ["1.000001", "0.399001"]
     
-    def format_secid(c):
-        # If frontend passes correct secid (with dots), use it
-        if '.' in c: return c 
-        # Guess secid based on code prefix
-        if c.startswith('6') or c.startswith('1') or c.startswith('5'): return f"1.{c}"
-        if c.startswith('0') or c.startswith('3') or c.startswith('4') or c.startswith('8'): return f"0.{c}"
-        return f"0.{c}"
-
-    secids = [format_secid(c) for c in target_codes] 
-    
-    url = f"http://6.push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f3,f12,f14,f2&secids={','.join(secids)}"
+    # Use the robust fetcher directly. 
+    # The new fetch_stock_quotes_sync handles secid formatting automatically.
     try:
+        quotes = await run_in_threadpool(AkshareService.fetch_stock_quotes_sync, target_codes)
+        result = []
+        for code, data in quotes.items():
+            # For indices, code might be '000001' or '399001' or 'HSI'
+            # We want to return what frontend expects.
+            # But the fetcher returns the clean code as key.
+            # Let's try to match names if possible, but API doesn't return name in dict easily unless we modify it.
+            # Modified fetch_stock_quotes_sync to key by f12 (code).
+            
+            # We need names. Let's adjust fetch_stock_quotes_sync return or just use what we have.
+            # For market page, we need name and code.
+            # Since fetch_stock_quotes_sync returns dict of {price, change}, we lose the name.
+            # Let's do a direct call here to preserve name.
+            pass
+
+        # Direct call for Market Page to keep Names
+        # Re-use the smart secid logic
+        unique = list(set([c.strip() for c in target_codes if c.strip()]))
+        secids = []
+        for c in unique:
+             # Just copy the logic from fetch_stock_quotes_sync for consistency
+             if '.' in c: secids.append(c)
+             elif len(c) == 6:
+                if c.startswith('6') or c.startswith('9') or c.startswith('5') or c.startswith('000'): secids.append(f"1.{c}")
+                elif c.startswith('0') or c.startswith('3') or c.startswith('1') or c.startswith('399'): secids.append(f"0.{c}")
+                elif c.startswith('8') or c.startswith('4'): secids.append(f"0.{c}")
+                else: secids.append(f"0.{c}")
+             elif len(c) == 5 and c.isdigit(): secids.append(f"116.{c}")
+             elif len(c) < 5 and c.isdigit(): secids.append(f"116.{c.zfill(5)}")
+             elif not c.isdigit(): secids.append(f"100.{c}")
+
+        url = f"http://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f2,f3,f12,f14&secids={','.join(secids)}"
         resp = await run_in_threadpool(lambda: requests.get(url, headers=AkshareService.get_quote_headers(), timeout=3))
         data = resp.json()
         result = []
@@ -527,6 +590,11 @@ async def market(codes: str = Query(None)):
                 change = float(item['f3']) if item['f3'] != '-' else 0.0
                 price = float(item['f2']) if item['f2'] != '-' else 0.0
                 score = max(0, min(100, 50 + change * 10))
+                
+                # If it's an index like 1.000001, f12 is 000001. 
+                # We should try to return the full code or match frontend expectation?
+                # Frontend just displays what we return.
+                
                 result.append({
                     "name": item['f14'], 
                     "code": str(item['f12']), 
