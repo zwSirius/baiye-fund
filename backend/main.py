@@ -379,6 +379,15 @@ class AkshareService:
         except:
             return []
 
+# --- Models ---
+
+class AnalyzeRequest(BaseModel):
+    prompt: str
+    api_key: Optional[str] = Field(None, alias="apiKey")
+
+class EstimateRequest(BaseModel):
+    codes: List[str]
+
 # --- Controller ---
 
 class FundController:
@@ -506,13 +515,6 @@ class FundController:
 app = FastAPI(title="SmartFund API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 router = APIRouter(prefix="/api")
-
-class AnalyzeRequest(BaseModel):
-    prompt: str
-    api_key: Optional[str] = Field(None, alias="apiKey")
-
-class EstimateRequest(BaseModel):
-    codes: List[str]
 
 @router.post("/estimate/batch")
 async def api_estimate(payload: EstimateRequest):
