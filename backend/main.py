@@ -111,6 +111,7 @@ class AkshareService:
         try:
             if market_type == 'A':
                 # stock_zh_a_spot_em: 沪深京 A 股实时行情
+                # 这是一个大接口，包含几千只股票，耗时可能 1-2秒
                 df = ak.stock_zh_a_spot_em()
                 if not df.empty:
                     for row in df.itertuples():
@@ -123,37 +124,41 @@ class AkshareService:
                             }
                         except: pass
             elif market_type == 'HK':
-                # stock_hk_spot_em 似乎不稳定，此处尝试用 stock_hk_index_spot_em 或其他替代
+                # 港股实时
                 try:
-                    df = ak.stock_hk_spot() # 备用接口
+                    df = ak.stock_hk_spot() 
                     if not df.empty:
                         for row in df.itertuples():
                             try:
                                 code = str(row.symbol)
                                 result_map[code] = {
                                     "price": float(row.lasttrade),
-                                    "change": float(row.percent) * 100, # 这里的 percent 可能是 0.01
+                                    "change": float(row.percent) * 100, 
                                     "name": str(row.name)
                                 }
                             except: pass
                 except: pass
 
             elif market_type == 'US':
-                df = ak.stock_us_spot_em()
-                if not df.empty:
-                    for row in df.itertuples():
-                        try:
-                            raw_code = str(row.代码) if hasattr(row, '代码') else "" 
-                            name = str(row.名称)
-                            ticker = raw_code.split('.')[-1]
-                            data = {
-                                "price": float(row.最新价) if row.最新价 != '-' else 0.0,
-                                "change": float(row.涨跌幅) if row.涨跌幅 != '-' else 0.0,
-                                "name": name
-                            }
-                            result_map[ticker] = data
-                            result_map[name] = data 
-                        except: pass
+                # 美股实时 (Akshare 这个接口比较慢，且不一定全)
+                # 仅作为补充
+                try:
+                    df = ak.stock_us_spot_em()
+                    if not df.empty:
+                        for row in df.itertuples():
+                            try:
+                                raw_code = str(row.代码) if hasattr(row, '代码') else "" 
+                                name = str(row.名称)
+                                ticker = raw_code.split('.')[-1]
+                                data = {
+                                    "price": float(row.最新价) if row.最新价 != '-' else 0.0,
+                                    "change": float(row.涨跌幅) if row.涨跌幅 != '-' else 0.0,
+                                    "name": name
+                                }
+                                result_map[ticker] = data
+                                result_map[name] = data 
+                            except: pass
+                except: pass
 
         except Exception as e:
             logger.error(f"Fetch {market_type} spot failed: {e}")
@@ -207,16 +212,13 @@ class AkshareService:
         indices_map = {}
         
         # 1. A股指数: stock_zh_index_spot_em
-        # 尝试多个 symbol 集合
-        zh_symbols = ["沪深重要指数", "上证系列指数", "深证系列指数", "指数成份"]
-        has_zh_data = False
+        # 为了获取中证白酒、新能源等细分指数，必须请求 "中证系列指数"
+        zh_symbols = ["沪深重要指数", "上证系列指数", "深证系列指数", "中证系列指数"]
         
         for sym in zh_symbols:
-            if has_zh_data and len(indices_map) > 5: break 
             try:
                 df_zh = ak.stock_zh_index_spot_em(symbol=sym)
                 if not df_zh.empty:
-                    has_zh_data = True
                     for row in df_zh.itertuples():
                         try:
                             code = str(row.代码)
@@ -296,10 +298,6 @@ class AkshareService:
     def fetch_index_daily_fallback(symbol: str):
         """
         休市期间 Spot 接口可能返回空，使用日线数据兜底
-        Symbol 格式转换: 
-        1.xxxxxx -> shxxxxxx
-        0.xxxxxx -> szxxxxxx
-        100.HSI -> 港股? 需要 specific mapping
         """
         try:
             ak_symbol = ""
@@ -309,7 +307,6 @@ class AkshareService:
             elif symbol.startswith('0.'):
                 ak_symbol = "sz" + symbol.split('.')[1]
                 df = ak.stock_zh_index_daily_em(symbol=ak_symbol)
-            # 港美股暂不通过此接口兜底，因为Spot通常较稳，且API不同
             
             if ak_symbol and not df.empty:
                 last = df.iloc[-1]
@@ -329,6 +326,32 @@ class AkshareService:
             df = ak.fund_name_em()
             return [{"code": str(r.基金代码), "name": str(r.基金简称), "type": str(r.基金类型), "pinyin": str(r.拼音缩写)} for r in df.itertuples()]
         except: return []
+    
+    @staticmethod
+    def fetch_industry_allocation_sync(code: str):
+        """获取行业配置"""
+        try:
+            current_year = datetime.now().year
+            # 尝试今年和去年，防止年初无数据
+            for year in [str(current_year), str(current_year - 1)]:
+                try:
+                    df = ak.fund_portfolio_industry_allocation_em(symbol=code, date=year)
+                    if not df.empty:
+                        # 格式化数据
+                        df['占净值比例'] = pd.to_numeric(df['占净值比例'], errors='coerce').fillna(0)
+                        # 按比例降序
+                        df_sorted = df.sort_values(by='占净值比例', ascending=False)
+                        # 取前5大行业
+                        top_industries = df_sorted.head(5)
+                        
+                        return [{
+                            "name": str(r['行业类别']),
+                            "percent": float(r['占净值比例'])
+                        } for _, r in top_industries.iterrows()]
+                except: continue
+        except Exception as e:
+            logger.warning(f"Industry allocation fetch failed for {code}: {e}")
+        return []
 
     @staticmethod
     def fetch_realtime_estimate_direct_sync(code: str):
@@ -418,7 +441,6 @@ class AkshareService:
                 
                 data = {"top": extract(df_sorted.head(5)), "bottom": extract(df_sorted.tail(5))}
                 
-                # Save to local file for persistence during restarts/maintenance
                 try:
                     with open(FILE_CACHE, 'w', encoding='utf-8') as f:
                         json.dump(data, f, ensure_ascii=False)
@@ -428,14 +450,12 @@ class AkshareService:
         except Exception as e:
             logger.warning(f"Sector fetch error: {e}")
         
-        # Fallback to file cache if API fails/empty (common at 1AM)
         try:
             if os.path.exists(FILE_CACHE):
                 with open(FILE_CACHE, 'r', encoding='utf-8') as f:
                     return json.load(f)
         except: pass
         
-        # Fallback to memory cache
         cached = cache_service._cache.get("market_sectors")
         if cached: return cached['data']
         
@@ -445,22 +465,29 @@ class AkshareService:
     def fetch_fund_rankings_sync():
         phase = AkshareService.get_time_phase()
         try:
+            # 优先使用实时估值接口，这样盘中可以看到最新的涨跌幅排行
             if phase in ['PRE_MARKET', 'MARKET', 'LUNCH_BREAK']:
                 df_est = ak.fund_value_estimation_em(symbol="全部")
                 if not df_est.empty:
-                    df_est['est_change'] = df_est['交易日-估算数据-估算增长率'].str.replace('%', '', regex=False)
+                    df_est['est_change'] = df_est['交易日-估算数据-估算增长率'].astype(str).str.replace('%', '', regex=False)
                     df_est['est_change'] = pd.to_numeric(df_est['est_change'], errors='coerce').fillna(0)
                     df_est['nav'] = pd.to_numeric(df_est['交易日-公布数据-单位净值'], errors='coerce').fillna(0)
+                    
+                    # 排序
                     df_sorted = df_est.sort_values(by='est_change', ascending=False)
+                    
                     def to_dict_est(rows): 
                         return [{
                             "code": str(r.基金代码), "name": str(r.基金名称), "changePercent": float(r.est_change), "nav": float(r.nav), "isRealtime": True
                         } for r in rows.itertuples()]
+                    
                     top_change = df_sorted.iloc[0]['est_change']
+                    # 确保数据有效 (非0则可能有效)
                     if abs(top_change) > 0.01:
                         return { "gainers": to_dict_est(df_sorted.head(20)), "losers": to_dict_est(df_sorted.tail(20).iloc[::-1]) }
         except Exception as e: logger.warning(f"Realtime ranking fetch failed: {e}")
 
+        # Fallback to daily rank (Yesterday's data)
         try:
             df = ak.fund_open_fund_rank_em(symbol="全部") 
             if df.empty: return {"gainers": [], "losers": []}
@@ -476,14 +503,13 @@ class AkshareService:
 class FundController:
     @staticmethod
     async def get_search_results(key: str):
-        # 增加缓存时间到 24小时 (86400s)，并由 Startup Event 预热
         cached = cache_service.get("funds_list", 86400) 
         if not cached:
             cached = await run_in_threadpool(AkshareService.fetch_fund_list_sync)
             if cached: cache_service.set("funds_list", cached)
         if not cached: return []
         
-        if not key: return [] # Empty key returns nothing
+        if not key: return []
         
         key = key.upper()
         res = []
@@ -504,9 +530,10 @@ class FundController:
         loop = asyncio.get_running_loop()
         holdings_task = run_in_threadpool(AkshareService.fetch_holdings_sync, code)
         basic_task = run_in_threadpool(AkshareService.fetch_fund_basic_info_sync, code)
+        industry_task = run_in_threadpool(AkshareService.fetch_industry_allocation_sync, code)
         a_spot_task = run_in_threadpool(AkshareService.fetch_stock_map_cached, 'A')
         
-        holdings, basic, a_spot_map = await asyncio.gather(holdings_task, basic_task, a_spot_task)
+        holdings, basic, industry, a_spot_map = await asyncio.gather(holdings_task, basic_task, industry_task, a_spot_task)
         
         hk_spot_map = {}
         us_spot_map = {}
@@ -521,8 +548,11 @@ class FundController:
             for h in holdings: 
                 c = h['code']
                 spot_data = None
+                # A股匹配: Akshare spot keys usually are 6 digits
                 if len(c) == 6 and c.isdigit(): spot_data = a_spot_map.get(c)
+                # 港股匹配: Akshare spot keys usually are 5 digits
                 elif len(c) == 5 and c.isdigit(): spot_data = hk_spot_map.get(c)
+                # 美股匹配: Ticker
                 else: spot_data = us_spot_map.get(c) or us_spot_map.get(h['name'])
 
                 if spot_data:
@@ -534,8 +564,12 @@ class FundController:
                     h['currentPrice'] = 0
 
         result = {
-            "code": code, "manager": basic.get('基金经理', '暂无'), "holdings": holdings,
-            "fund_size": basic.get('最新规模', '--'), "start_date": basic.get('成立时间', '--'),
+            "code": code, 
+            "manager": basic.get('基金经理', '暂无'), 
+            "holdings": holdings,
+            "industryDistribution": industry, # New Field
+            "fund_size": basic.get('最新规模', '--'), 
+            "start_date": basic.get('成立时间', '--'),
             "type": basic.get('基金类型', '混合型'),
         }
         cache_service.set(cache_key, result)
@@ -559,7 +593,7 @@ class FundController:
             found = False
             clean_code = req_c.split('.')[-1]
             
-            # 1. Try Spot Map
+            # 1. Try Spot Map (Exact Match)
             if clean_code in indices_spot_map:
                 data = indices_spot_map[clean_code]
                 indices.append({
@@ -569,18 +603,19 @@ class FundController:
                 })
                 found = True
             
+            # 2. Try Name Match (For codes that might change or have complex prefixes)
+            # If front-end passes "0.399997" (White Liquor), backend Akshare might have key "399997"
             if not found:
-                 possible_name = code_to_name_map.get(req_c, req_c)
-                 if possible_name in indices_spot_map:
-                      data = indices_spot_map[possible_name]
+                 if clean_code in indices_spot_map:
+                      data = indices_spot_map[clean_code]
                       indices.append({
-                        "name": data['name'], "code": req_c,
-                        "changePercent": data['change'], "value": data['price'],
-                        "score": int(max(0, min(100, 50 + data['change'] * 10))),
+                            "name": data['name'], "code": req_c,
+                            "changePercent": data['change'], "value": data['price'],
+                            "score": 50
                       })
                       found = True
             
-            # 2. Last Resort: Try Fetching Daily History (for A-shares mostly)
+            # 3. Last Resort: Daily History
             if not found and (req_c.startswith('1.') or req_c.startswith('0.')):
                 try:
                     fallback_data = await run_in_threadpool(AkshareService.fetch_index_daily_fallback, req_c)
@@ -610,21 +645,15 @@ class FundController:
     @staticmethod
     async def batch_estimate(codes: List[str]):
         if not codes: return []
-        
         CACHE_TTL = 300 
         results = []
         missing_codes = []
-        
         cache_keys = [f"est_result_{c}" for c in codes]
         cached_data = cache_service.mget(cache_keys, CACHE_TTL)
-        
         for c in codes:
             key = f"est_result_{c}"
-            if key in cached_data:
-                results.append(cached_data[key])
-            else:
-                missing_codes.append(c)
-        
+            if key in cached_data: results.append(cached_data[key])
+            else: missing_codes.append(c)
         if not missing_codes: return results
 
         loop = asyncio.get_running_loop()
@@ -632,21 +661,14 @@ class FundController:
         today_str = today.strftime('%Y-%m-%d')
         today_cache_key = today_str
 
-        # 优化策略：
-        # 不再拉取全量 fund_open_fund_daily_em (太慢)
-        # 而是并行拉取每个基金的 History (官方确权) 和 JS Estimate (实时/官方估值)
-        # 如果 History 最新日期 >= JS Estimate 日期，说明官方已确权，覆盖 JS 数据。
-        
         etf_lof_map_task = loop.run_in_executor(None, AkshareService.fetch_etf_lof_spot_cached)
 
         async def fetch_one(c):
             est = await loop.run_in_executor(None, AkshareService.fetch_realtime_estimate_direct_sync, c)
-            # Fetch history to get confirmed official NAV
             hist = await loop.run_in_executor(None, AkshareService.fetch_fund_history_sync_cached, c, today_cache_key)
             return c, est, hist
 
         results_data_task = asyncio.gather(*[fetch_one(c) for c in missing_codes])
-        
         etf_lof_map, results_data = await asyncio.gather(etf_lof_map_task, results_data_task)
         
         phase = AkshareService.get_time_phase()
@@ -659,61 +681,28 @@ class FundController:
                 try: return float(v)
                 except: return default
 
-            # Parse History (Official Confirmed Data)
             official_confirmed_nav = 0.0
             official_confirmed_date = ""
             official_confirmed_change = 0.0
             
             if not hist.empty:
-                # hist sorted by date ascending usually? akshare returns df.
-                # Assuming last row is latest
                 latest = hist.iloc[-1]
                 official_confirmed_nav = float(latest['单位净值'])
                 official_confirmed_date = str(latest['净值日期'])
-                
-                # Calculate change if possible
                 if len(hist) > 1:
                     prev = hist.iloc[-2]
                     prev_nav = float(prev['单位净值'])
                     if prev_nav > 0:
                         official_confirmed_change = ((official_confirmed_nav - prev_nav) / prev_nav) * 100
 
-            # Parse Estimate (JS Data)
             api_dwjz = safe_float(res.get('dwjz'))
-            api_jzrq = res.get('jzrq', '') # Estimate usually returns prev day confirmed date in jzrq, unless official updated?
-            # Actually JS `jzrq` is "Value Date". `time` is estimate time.
+            api_jzrq = res.get('jzrq', '')
             api_gsz = safe_float(res.get('gsz'))
-            api_gszzl = safe_float(res.get('gszzl'))
-
-            is_official_updated = False
-            
-            # --- 优先级逻辑 (Smart Overwrite) ---
-            
-            # Logic: If Official History Date is >= Estimate Date (or if Official Date is "Today" or "Yesterday" and JS is stuck)
-            # Crucial: JS interface (fundgz) often keeps 15:00 estimate even after official NAV is out on other endpoints.
-            # We rely on History Date.
             
             use_history_as_official = False
-            
             if official_confirmed_nav > 0:
-                # Case 1: Official History has today's date -> It is finalized.
-                if official_confirmed_date == today_str:
-                    use_history_as_official = True
-                
-                # Case 2: Official History date is SAME as JS Estimate date, 
-                # AND Official NAV != JS Estimate NAV (implies estimate was wrong and official is out? Or just diff?)
-                # Actually, if dates match, History is always "Truth". JS Estimate is just "Estimate".
-                # If JS `jzrq` (last nav date) == official date, it means JS hasn't updated to *next* day yet?
-                # JS `gsz` is for `gztime`. 
-                # Compare `official_confirmed_date` vs `res.get('time')` date?
-                # Simplification: If official_confirmed_date is "newer" than what we expect, use it.
-                # If official_confirmed_date > api_jzrq (JS last nav date), then History is fresher.
-                elif api_jzrq and official_confirmed_date > api_jzrq:
-                    use_history_as_official = True
-                
-                # Case 3: Just check if History is logically the latest possible.
-                # If phase is POST_MARKET (late night), and history date == today (or yesterday if after midnight but before open)
-                # This is handled by Case 1 & logic below.
+                if official_confirmed_date == today_str: use_history_as_official = True
+                elif api_jzrq and official_confirmed_date > api_jzrq: use_history_as_official = True
             
             if use_history_as_official:
                 res['dwjz'] = str(official_confirmed_nav)
@@ -722,11 +711,10 @@ class FundController:
                 res['source'] = 'official_history_ak'
                 res['gztime'] = "已更新(官方)"
                 res['jzrq'] = official_confirmed_date
-                
-                api_dwjz = official_confirmed_nav
                 is_official_updated = True
+            else:
+                is_official_updated = False
 
-            # 2. ETF/LOF Realtime (Intraday backup)
             if not is_official_updated and etf_lof_map and code in etf_lof_map:
                  spot_info = etf_lof_map[code]
                  if spot_info['price'] > 0:
@@ -735,22 +723,15 @@ class FundController:
                     res['source'] = f'realtime_{spot_info["type"].lower()}' 
                     res['gztime'] = "实时交易"
             
-            # 3. Last resort fallback / Heavy Calculation
             last_nav = official_confirmed_nav if official_confirmed_nav > 0 else api_dwjz
-            
-            if is_official_updated:
-                # If officially updated, GSZ = NAV, Change = Real Change
-                pass 
-            else:
+            if not is_official_updated:
                 res['_last_nav'] = last_nav 
                 gsz = safe_float(res.get('gsz'))
-                # Calculate if no valid estimate exists
                 if gsz <= 0 and phase != 'PRE_MARKET' and 'realtime' not in res.get('source', ''): 
                     calc_needed.append(code)
 
             results_map[code] = res
 
-        # 重仓股估算逻辑
         if calc_needed:
             codes_to_fetch_h = [c for c in calc_needed if not cache_service.get(f"holdings_{c}", 86400)]
             if codes_to_fetch_h:
@@ -774,7 +755,6 @@ class FundController:
                 data = results_map[c]
                 holdings = cache_service.get(f"holdings_{c}", 86400) or []
                 if not holdings: continue
-                
                 weighted_chg = 0
                 total_w = 0
                 for h in holdings:
@@ -784,11 +764,9 @@ class FundController:
                     if len(sc) == 6 and sc.isdigit(): sq = a_map.get(sc)
                     elif len(sc) == 5 and sc.isdigit(): sq = hk_map.get(sc)
                     else: sq = us_map.get(sc)
-                    
                     if sq:
                         weighted_chg += (sq['change'] * w)
                         total_w += w
-                
                 est_chg = 0
                 if total_w > 0: est_chg = (weighted_chg / total_w) * 0.95 
                 last_n = data.get('_last_nav', 0)
@@ -830,7 +808,7 @@ async def startup_event():
     logger.info("Fund list cached.")
 
 @router.get("/status")
-def status(): return { "phase": AkshareService.get_time_phase(), "ts": datetime.now().timestamp(), "version": "4.5" }
+def status(): return { "phase": AkshareService.get_time_phase(), "ts": datetime.now().timestamp(), "version": "4.6" }
 @router.get("/search")
 async def search(key: str = Query(..., min_length=1)): return await FundController.get_search_results(key)
 @router.get("/market/overview")

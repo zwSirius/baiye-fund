@@ -45,9 +45,6 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({ isOpen, onCl
   //       到手金额 = 赎回总额 - 赎回费
   // 这里为了统一交互，我们假设用户输入的是“发生金额”（买入是支付金额，卖出是期望到手金额的估算，或者简单点：卖出份额对应的资产）
   
-  // 为了简化：卖出时通常输入“份额”。但 Prompt 要求“输入买卖金额”。
-  // 如果输入的是金额，我们需要反推份额： 份额 ≈ 金额 / 净值
-  
   let estimatedShares = 0;
   let estimatedFee = 0;
 
@@ -107,7 +104,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({ isOpen, onCl
 
             {/* 净值展示 */}
             <div className="flex justify-between items-center bg-slate-50 p-3 rounded-lg border border-slate-100">
-                <span className="text-xs text-slate-500">当日净值 (模拟)</span>
+                <span className="text-xs text-slate-500">当日净值</span>
                 {isLoadingNav ? (
                     <Loader2 size={16} className="animate-spin text-blue-500" />
                 ) : (

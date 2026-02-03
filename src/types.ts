@@ -1,9 +1,15 @@
+
 export interface Stock {
   code: string;
   name: string;
   percent: number; // 持仓占比 (e.g., 8.5 for 8.5%)
   currentPrice: number;
   changePercent: number; // 涨跌幅 (e.g., 1.2 for +1.2%)
+}
+
+export interface IndustryItem {
+    name: string;
+    percent: number;
 }
 
 export type TransactionType = 'BUY' | 'SELL';
@@ -32,6 +38,7 @@ export interface Fund {
   lastNav: number; // 昨日净值
   lastNavDate: string;
   holdings: Stock[]; // 十大重仓
+  industryDistribution?: IndustryItem[]; // 行业配置
   tags: string[]; // e.g. "科技", "白酒"
   type?: string; // e.g. "混合型", "指数型"
   start_date?: string; // 成立日期

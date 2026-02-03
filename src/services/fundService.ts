@@ -155,6 +155,7 @@ export const fetchFundDetails = async (fund: Fund): Promise<Fund> => {
             manager: data.manager || fund.manager,
             type: data.type || fund.type,
             start_date: data.start_date || fund.start_date,
+            industryDistribution: data.industryDistribution || [],
             holdings: Array.isArray(data.holdings) ? data.holdings.map((h: any) => ({
                 code: h.code,
                 name: h.name,

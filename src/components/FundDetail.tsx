@@ -1,8 +1,8 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Fund, Transaction } from '../types';
 import { getFundHistoryData, fetchFundDetails } from '../services/fundService';
-import { ChevronLeft, Edit2, Trash2, History, Loader2, Layers, Info, Tag, TrendingUp, TrendingDown, Wallet, ArrowUpRight, ArrowDownRight } from 'lucide-react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { ChevronLeft, Edit2, Trash2, History, Loader2, Layers, Info, Tag, TrendingUp, TrendingDown, Wallet, ArrowUpRight, ArrowDownRight, PieChart as PieChartIcon } from 'lucide-react';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
 
 interface FundDetailProps {
   fund: Fund;
@@ -27,6 +27,15 @@ const CustomizedDot = (props: any) => {
   }
   return null;
 };
+
+const getSourceLabel = (source?: string) => {
+    switch (source) {
+        case 'official_history_ak': return '✅ 官方公布'; // official history
+        case 'official_realtime': return '📊 官方估算'; // estimate api
+        case 'holdings_calc_batch': return '⚡ 重仓股估算'; // calculated
+        default: return '📊 官方估算';
+    }
+}
 
 export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, onDelete, onBuy, onSell }) => {
   const [chartPeriod, setChartPeriod] = useState<number>(90);
@@ -156,7 +165,7 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                        <div>
                            <div className="flex items-center gap-2 mb-1 opacity-90">
                                <span className="text-xs font-medium border border-white/20 px-2 py-0.5 rounded-full flex items-center gap-1">
-                                    {displayFund.source && displayFund.source.includes('official') ? '✅ 官方公布' : (displayFund.source === 'holdings_calc_batch' ? '⚡ 重仓股估算' : '📊 官方估算')}
+                                    {getSourceLabel(displayFund.source)}
                                </span>
                                <span className="text-[10px]">{displayFund.estimateTime || displayFund.lastNavDate}</span>
                            </div>
@@ -341,8 +350,39 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                  )}
              </div>
           )}
+          
+          {/* Industry Distribution Module */}
+          {displayFund.industryDistribution && displayFund.industryDistribution.length > 0 && (
+            <div className="bg-white dark:bg-slate-900 p-4 shadow-sm border border-slate-100 dark:border-slate-800 mx-4 rounded-xl mb-3">
+                 <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 text-sm mb-4">
+                    <PieChartIcon size={16} className="text-indigo-500" />
+                    行业配置 (Top 5)
+                 </h3>
+                 <div className="h-32">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <BarChart layout="vertical" data={displayFund.industryDistribution} margin={{left: 30, right: 30}}>
+                            <XAxis type="number" hide />
+                            <YAxis 
+                                type="category" 
+                                dataKey="name" 
+                                width={60} 
+                                tick={{fontSize: 10, fill: '#64748b'}} 
+                                axisLine={false} 
+                                tickLine={false}
+                            />
+                            <Tooltip cursor={{fill: 'transparent'}} contentStyle={{borderRadius: '8px', border: 'none', fontSize: '10px'}} />
+                            <Bar dataKey="percent" barSize={12} radius={[0, 4, 4, 0]}>
+                                {displayFund.industryDistribution.map((entry, index) => (
+                                    <Cell key={`cell-${index}`} fill={['#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899'][index % 5]} />
+                                ))}
+                            </Bar>
+                        </BarChart>
+                    </ResponsiveContainer>
+                 </div>
+            </div>
+          )}
 
-          {/* Holdings Breakdown (No borders) */}
+          {/* Holdings Breakdown */}
           <div className="bg-white dark:bg-slate-900 p-0 shadow-sm border border-slate-100 dark:border-slate-800 mt-2 mx-4 rounded-xl overflow-hidden">
                  <div className="flex items-center justify-between p-4 border-b border-slate-50 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50">
                      <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 text-sm">
