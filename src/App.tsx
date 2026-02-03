@@ -198,7 +198,8 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans max-w-md mx-auto shadow-2xl relative overflow-hidden transition-colors pb-24">
       {/* Header */}
-      <header className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md px-5 pt-12 pb-3 sticky top-0 z-20 flex justify-between items-center transition-colors border-b border-transparent dark:border-slate-800 pt-safe-top">
+      {/* Updated: using pt-safe-header class instead of pt-12 to provide more whitespace as requested */}
+      <header className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md px-5 pb-3 sticky top-0 z-20 flex justify-between items-center transition-colors border-b border-transparent dark:border-slate-800 pt-safe-header">
         <div className="flex items-center gap-2">
             <div>
                 <h1 className="text-xl font-black text-slate-800 dark:text-white tracking-tight flex items-center gap-1">

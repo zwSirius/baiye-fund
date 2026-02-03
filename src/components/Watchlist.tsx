@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { Fund } from '../types';
 import { Plus, Search, Eye, TrendingUp, TrendingDown, Trash2 } from 'lucide-react';
@@ -14,7 +15,8 @@ interface WatchlistProps {
 export const Watchlist: React.FC<WatchlistProps> = ({ funds, onAdd, onRemove, onRefresh, onFundClick, isRefreshing }) => {
   return (
     <div className="pb-24 animate-fade-in">
-      <div className="bg-white dark:bg-slate-900 sticky top-[72px] z-20 border-b border-slate-100 dark:border-slate-800 px-4 py-3 flex justify-between items-center shadow-sm">
+      {/* Updated to use sticky-sub-header class defined in index.html for correct positioning */}
+      <div className="bg-white dark:bg-slate-900 sticky sticky-sub-header z-20 border-b border-slate-100 dark:border-slate-800 px-4 py-3 flex justify-between items-center shadow-sm">
          <div className="flex items-center gap-2">
             <Eye className="text-blue-500" size={20} />
             <h2 className="text-lg font-bold text-slate-800 dark:text-slate-100">自选观察</h2>

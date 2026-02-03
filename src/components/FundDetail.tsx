@@ -97,7 +97,7 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
   const isPortfolio = displayFund.holdingShares > 0;
 
   return (
-    <div className="fixed inset-0 bg-slate-50 dark:bg-slate-950 z-50 overflow-y-auto animate-fade-in flex flex-col pt-safe-top">
+    <div className="fixed inset-0 bg-slate-50 dark:bg-slate-950 z-50 overflow-y-auto animate-fade-in flex flex-col pt-detail-header">
       {/* Navbar */}
       <div className="bg-white/90 backdrop-blur-md dark:bg-slate-900/90 sticky top-0 z-20 px-4 py-3 flex items-center justify-between shadow-sm border-b border-slate-100 dark:border-slate-800 transition-colors">
         <div className="flex items-center">

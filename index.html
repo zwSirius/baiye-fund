@@ -63,22 +63,50 @@
       }
     </script>
     <style>
+      :root {
+        /* 
+          Main Header Height Calculation:
+          Reduced whitespace to 10px as requested (approx 1 status bar total visual height with env)
+        */
+        --header-whitespace: 10px;
+        --header-content-height: 44px;
+        --header-padding-bottom: 12px;
+        
+        --total-header-height: calc(env(safe-area-inset-top) + var(--header-whitespace) + var(--header-content-height) + var(--header-padding-bottom));
+      }
+
       body {
         background-color: #f1f5f9;
         font-family: 'Inter', 'Noto Sans SC', sans-serif;
         -webkit-tap-highlight-color: transparent;
         overscroll-behavior-y: none;
-        /* High DPI Rendering Optimizations */
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
         text-rendering: optimizeLegibility;
       }
+      
       .pb-safe {
         padding-bottom: env(safe-area-inset-bottom);
       }
-      .pt-safe-top {
-        padding-top: env(safe-area-inset-top);
+      
+      /* Applies the padding to the Main Header */
+      .pt-safe-header {
+        padding-top: calc(env(safe-area-inset-top) + var(--header-whitespace));
       }
+      
+      /* 
+        Specific padding for Fund Detail Page 
+        Adds extra buffer (~1.5x status bar height effect) to ensure buttons are clickable on iOS
+      */
+      .pt-detail-header {
+        padding-top: calc(env(safe-area-inset-top) + 32px);
+      }
+
+      /* Applies the correct 'top' position for sticky sub-headers (Watchlist, Market) */
+      .sticky-sub-header {
+        top: var(--total-header-height);
+      }
+
       .no-scrollbar::-webkit-scrollbar {
         display: none;
       }
@@ -86,6 +114,7 @@
         -ms-overflow-style: none;
         scrollbar-width: none;
       }
+      
       /* Glassmorphism utilities */
       .glass {
         background: rgba(255, 255, 255, 0.7);
@@ -97,13 +126,7 @@
         backdrop-filter: blur(12px);
         -webkit-backdrop-filter: blur(12px);
       }
-      .glass-card {
-        background: rgba(255, 255, 255, 0.85);
-        backdrop-filter: blur(8px);
-        border: 1px solid rgba(255, 255, 255, 0.5);
-      }
       
-      /* Ensure crisp borders on high-DPI screens */
       @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) { 
         .border, .border-b, .border-t, .border-l, .border-r {
           border-width: 0.5px;

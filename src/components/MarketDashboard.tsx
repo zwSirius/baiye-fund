@@ -32,7 +32,8 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = () => {
 
     return (
         <div className="pb-24 animate-fade-in space-y-6">
-            <div className="sticky top-[72px] z-20 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-4 py-3 flex justify-between items-center border-b border-slate-100 dark:border-slate-800">
+            {/* Updated to use sticky-sub-header class */}
+            <div className="sticky sticky-sub-header z-20 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md px-4 py-3 flex justify-between items-center border-b border-slate-100 dark:border-slate-800">
                 <h2 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2"><BarChart3 className="text-blue-500" size={20}/> 市场全景</h2>
                 <button onClick={() => loadData(true)} className="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 transition active:rotate-180"><RefreshCw size={18} className={isLoading ? 'animate-spin' : ''} /></button>
             </div>
