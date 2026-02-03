@@ -1,3 +1,4 @@
+
 import { GoogleGenAI } from "@google/genai";
 import { Fund } from "../types";
 
@@ -10,6 +11,22 @@ export const getEffectiveApiKey = (): string | null => {
     }
     return null; // 无可用 Key
 };
+
+export const verifyApiKey = async (apiKey: string): Promise<boolean> => {
+    try {
+        const ai = new GoogleGenAI({ apiKey });
+        const model = "gemini-3-flash-preview";
+        // 发送一个极简请求测试连通性
+        await ai.models.generateContent({
+            model: model,
+            contents: "Hi",
+        });
+        return true;
+    } catch (error) {
+        console.error("API Key Verification Failed:", error);
+        return false;
+    }
+}
 
 export const analyzeFund = async (fund: Fund): Promise<string> => {
   const apiKey = getEffectiveApiKey();

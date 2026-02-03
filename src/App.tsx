@@ -1,7 +1,8 @@
 
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { TabView, Transaction, TransactionType } from './types';
-import { analyzeFund } from './services/geminiService';
+import { analyzeFund, verifyApiKey } from './services/geminiService';
 import { exportData, importData } from './services/fundService';
 import { calculateFundMetrics } from './utils/finance';
 import { useFund } from './contexts/FundContext';
@@ -19,7 +20,7 @@ import { ProfitCalendar } from './components/ProfitCalendar';
 import { MarketDashboard } from './components/MarketDashboard';
 
 // Icons
-import { LayoutGrid, Settings, Bot, Plus, Moon, Sun, Monitor, Download, Upload, Clipboard, ClipboardPaste, Users, X, Eye, EyeOff, Key, BarChart3, Calendar } from 'lucide-react';
+import { LayoutGrid, Settings, Bot, Plus, Moon, Sun, Monitor, Download, Upload, Clipboard, ClipboardPaste, Users, X, Eye, EyeOff, Key, BarChart3, Calendar, Trash2, Check } from 'lucide-react';
 
 const NavBtn = ({ icon, label, isActive, onClick }: any) => (
     <button 
@@ -49,6 +50,7 @@ const App: React.FC = () => {
   const [currentGroupId, setCurrentGroupId] = useState<string>('all'); 
   
   const [customApiKey, setCustomApiKey] = useState('');
+  const [apiConnectionStatus, setApiConnectionStatus] = useState<'connected' | 'failed' | 'unknown'>('unknown');
   
   const [isAddModalOpen, setAddModalOpen] = useState(false);
   const [isWatchlistMode, setIsWatchlistMode] = useState(false);
@@ -108,7 +110,10 @@ const App: React.FC = () => {
     if (storedPrivacy === 'true') setIsPrivacyMode(true);
     
     const storedKey = localStorage.getItem('smartfund_custom_key');
-    if (storedKey) setCustomApiKey(storedKey);
+    if (storedKey) {
+        setCustomApiKey(storedKey);
+        verifyApiKey(storedKey).then(ok => setApiConnectionStatus(ok ? 'connected' : 'failed'));
+    }
   }, []);
 
   const togglePrivacy = () => {
@@ -117,10 +122,27 @@ const App: React.FC = () => {
       localStorage.setItem('smartfund_privacy_mode', String(newVal));
   };
 
-  const saveCustomApiKey = () => {
-      localStorage.setItem('smartfund_custom_key', customApiKey.trim());
+  const saveCustomApiKey = async () => {
+      if (!customApiKey.trim()) return;
+      
+      const success = await verifyApiKey(customApiKey.trim());
+      
+      if (success) {
+          localStorage.setItem('smartfund_custom_key', customApiKey.trim());
+          setApiConnectionStatus('connected');
+          window.dispatchEvent(new Event('storage'));
+          alert('API Key 已验证并保存');
+      } else {
+          setApiConnectionStatus('failed');
+          alert('API Key 验证失败，请检查是否正确或网络连接');
+      }
+  };
+
+  const clearApiKey = () => {
+      setCustomApiKey('');
+      localStorage.removeItem('smartfund_custom_key');
+      setApiConnectionStatus('unknown');
       window.dispatchEvent(new Event('storage'));
-      alert('API Key 已保存');
   };
 
   const handleAnalyze = async (fund: any) => {
@@ -198,7 +220,6 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans max-w-md mx-auto shadow-2xl relative overflow-hidden transition-colors pb-24">
       {/* Header */}
-      {/* Updated: using pt-safe-header class instead of pt-12 to provide more whitespace as requested */}
       <header className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md px-5 pb-3 sticky top-0 z-20 flex justify-between items-center transition-colors border-b border-transparent dark:border-slate-800 pt-safe-header">
         <div className="flex items-center gap-2">
             <div>
@@ -207,16 +228,12 @@ const App: React.FC = () => {
                 </h1>
                 <p className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">AI Wealth Assistant</p>
             </div>
-            <button onClick={togglePrivacy} className="text-slate-400 hover:text-slate-600 ml-2 p-1">
-                {isPrivacyMode ? <EyeOff size={16}/> : <Eye size={16}/>}
+        </div>
+        <div className="flex gap-2">
+            <button onClick={togglePrivacy} className="text-slate-400 hover:text-slate-600 p-2 bg-slate-100 dark:bg-slate-800 rounded-full">
+                {isPrivacyMode ? <EyeOff size={18}/> : <Eye size={18}/>}
             </button>
         </div>
-        <button 
-            onClick={() => { setEditingFundId(null); setIsWatchlistMode(false); setAddModalOpen(true); }}
-            className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 p-2.5 rounded-full hover:scale-105 shadow-lg shadow-slate-200 dark:shadow-slate-800 transition active:scale-95"
-        >
-           <Plus size={20} />
-        </button>
       </header>
 
       {/* Main */}
@@ -236,6 +253,7 @@ const App: React.FC = () => {
                 onFundClick={(f) => setSelectedFundId(f.id)}
                 onGroupChange={setCurrentGroupId}
                 onManageGroups={() => setIsManageGroupsOpen(true)}
+                onAdd={() => { setEditingFundId(null); setIsWatchlistMode(false); setAddModalOpen(true); }}
             />
         )}
         
@@ -258,7 +276,9 @@ const App: React.FC = () => {
             <MarketDashboard marketCodes={marketCodes} onConfigMarket={() => setIsMarketConfigOpen(true)} />
         )}
         
-        {activeTab === TabView.AI_INSIGHTS && <AIChat onGoToSettings={goToSettings} />}
+        {activeTab === TabView.AI_INSIGHTS && (
+            <AIChat onGoToSettings={goToSettings} connectionStatus={apiConnectionStatus} />
+        )}
         
         {activeTab === TabView.SETTINGS && (
             <div className="p-6 pb-24 animate-fade-in">
@@ -289,13 +309,28 @@ const App: React.FC = () => {
                                 placeholder="sk-..."
                                 className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             />
+                            {customApiKey && (
+                                <button onClick={clearApiKey} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 active:scale-95 transition">
+                                    <Trash2 size={18}/>
+                                </button>
+                            )}
                             <button 
                                 onClick={saveCustomApiKey}
-                                className="bg-indigo-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold active:scale-95 transition"
+                                className="bg-indigo-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold active:scale-95 transition whitespace-nowrap"
                             >
-                                保存
+                                保存并测试
                             </button>
                         </div>
+                        {apiConnectionStatus === 'connected' && (
+                            <div className="mt-2 text-xs text-green-500 flex items-center gap-1 font-bold">
+                                <Check size={12}/> 连接成功
+                            </div>
+                        )}
+                        {apiConnectionStatus === 'failed' && (
+                            <div className="mt-2 text-xs text-red-500 flex items-center gap-1 font-bold">
+                                <X size={12}/> 连接失败，请检查Key
+                            </div>
+                        )}
                     </div>
 
                     <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 p-5">
@@ -319,8 +354,8 @@ const App: React.FC = () => {
         )}
       </main>
 
-      {/* Nav - Scrollable for 6 items */}
-      <nav className="fixed bottom-6 left-1/2 transform -translate-x-1/2 w-[90%] max-w-[380px] bg-white/90 backdrop-blur-xl dark:bg-slate-800/90 border border-white/20 dark:border-slate-700 rounded-full h-[64px] flex items-center px-1 z-40 shadow-2xl shadow-slate-200/50 dark:shadow-black/50 overflow-x-auto no-scrollbar">
+      {/* Nav - Scrollable for 6 items - Enhanced blur */}
+      <nav className="fixed bottom-6 left-1/2 transform -translate-x-1/2 w-[90%] max-w-[380px] bg-white/70 backdrop-blur-2xl dark:bg-slate-800/70 border border-white/20 dark:border-slate-700 rounded-full h-[64px] flex items-center px-1 z-40 shadow-2xl shadow-slate-200/50 dark:shadow-black/50 overflow-x-auto no-scrollbar">
         <div className="flex w-full justify-between px-2">
             <NavBtn icon={<LayoutGrid />} label="资产" isActive={activeTab === TabView.DASHBOARD} onClick={() => setActiveTab(TabView.DASHBOARD)} />
             <NavBtn icon={<Eye />} label="自选" isActive={activeTab === TabView.WATCHLIST} onClick={() => setActiveTab(TabView.WATCHLIST)} />

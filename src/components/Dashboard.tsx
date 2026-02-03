@@ -17,6 +17,7 @@ interface DashboardProps {
   onFundClick: (fund: Fund) => void;
   onGroupChange: (groupId: string) => void;
   onManageGroups: () => void;
+  onAdd: () => void; 
 }
 
 const formatMoney = (val: number, isHidden: boolean) => {
@@ -57,7 +58,7 @@ const MarketStatus = () => {
 
 export const Dashboard: React.FC<DashboardProps> = ({ 
     funds, groups, currentGroupId, totalMarketValue, totalProfit, lastUpdate, isRefreshing, isPrivacyMode,
-    onRefresh, onFundClick, onGroupChange, onManageGroups
+    onRefresh, onFundClick, onGroupChange, onManageGroups, onAdd
 }) => {
   const [viewMode, setViewMode] = useState<'FUNDS' | 'SUMMARY'>('FUNDS');
   
@@ -91,14 +92,22 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   return (
     <div className="space-y-4 pb-24">
-      {/* Tabs */}
-      <div className="px-4 pt-2 flex items-center gap-2 overflow-x-auto no-scrollbar">
-         <button onClick={handleSummaryClick} className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 flex-shrink-0 ${viewMode === 'SUMMARY' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 border border-slate-200 dark:bg-slate-800 dark:border-slate-700'}`}><LayoutDashboard size={14} /> 汇总</button>
-         <button onClick={() => handleGroupTabClick('all')} className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition flex-shrink-0 ${currentGroupId === 'all' && viewMode !== 'SUMMARY' ? 'bg-slate-800 text-white dark:bg-slate-200 dark:text-slate-900' : 'bg-white text-slate-500 border border-slate-200 dark:bg-slate-800 dark:border-slate-700'}`}>全部</button>
-         {groups.map(g => (
-             <button key={g.id} onClick={() => handleGroupTabClick(g.id)} className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition flex-shrink-0 ${currentGroupId === g.id && viewMode !== 'SUMMARY' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 border border-slate-200 dark:bg-slate-800 dark:border-slate-700'}`}>{g.name}</button>
-         ))}
-         <button onClick={onManageGroups} className="whitespace-nowrap w-7 h-7 flex items-center justify-center rounded-full text-xs bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500"><Plus size={14} /></button>
+      {/* Tabs & Add Button */}
+      <div className="px-4 pt-2 flex items-center justify-between">
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar flex-1">
+             <button onClick={handleSummaryClick} className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition flex items-center gap-1.5 flex-shrink-0 ${viewMode === 'SUMMARY' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 border border-slate-200 dark:bg-slate-800 dark:border-slate-700'}`}><LayoutDashboard size={14} /> 汇总</button>
+             <button onClick={() => handleGroupTabClick('all')} className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition flex-shrink-0 ${currentGroupId === 'all' && viewMode !== 'SUMMARY' ? 'bg-slate-800 text-white dark:bg-slate-200 dark:text-slate-900' : 'bg-white text-slate-500 border border-slate-200 dark:bg-slate-800 dark:border-slate-700'}`}>全部</button>
+             {groups.map(g => (
+                 <button key={g.id} onClick={() => handleGroupTabClick(g.id)} className={`whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold transition flex-shrink-0 ${currentGroupId === g.id && viewMode !== 'SUMMARY' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 border border-slate-200 dark:bg-slate-800 dark:border-slate-700'}`}>{g.name}</button>
+             ))}
+             <button onClick={onManageGroups} className="whitespace-nowrap w-7 h-7 flex items-center justify-center rounded-full text-xs bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 flex-shrink-0"><Plus size={14} /></button>
+          </div>
+          <button 
+             onClick={onAdd}
+             className="ml-2 w-8 h-8 flex items-center justify-center rounded-full bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-lg active:scale-95 transition flex-shrink-0"
+          >
+             <Plus size={18} />
+          </button>
       </div>
 
       {/* Asset Card */}

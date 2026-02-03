@@ -2,15 +2,16 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI } from "@google/genai";
 import { ChatMessage } from '../types';
-import { Send, Bot, User, Loader2, Sparkles, Lock, Settings, LogOut } from 'lucide-react';
+import { Send, Bot, User, Loader2, Sparkles, Lock, Settings, LogOut, Wifi, WifiOff } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { getEffectiveApiKey } from '../services/geminiService';
 
 interface AIChatProps {
     onGoToSettings: () => void;
+    connectionStatus: 'connected' | 'failed' | 'unknown';
 }
 
-export const AIChat: React.FC<AIChatProps> = ({ onGoToSettings }) => {
+export const AIChat: React.FC<AIChatProps> = ({ onGoToSettings, connectionStatus }) => {
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([{ id: '1', role: 'model', text: '你好！我是你的智能投资顾问。我可以帮你分析市场热点、解读基金报告，或者提供理财建议。今天想聊点什么？' }]);
   const [input, setInput] = useState('');
@@ -82,7 +83,15 @@ export const AIChat: React.FC<AIChatProps> = ({ onGoToSettings }) => {
                 <Sparkles className="text-indigo-500" size={20} />
                 <h2 className="font-bold text-slate-800 dark:text-white text-sm">AI 投资顾问</h2>
             </div>
-            <button onClick={handleDisconnect} className="text-xs text-red-400 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded-full flex items-center gap-1 hover:bg-red-100"><LogOut size={10} /> 断开</button>
+            <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1">
+                    {connectionStatus === 'connected' ? <Wifi size={14} className="text-green-500"/> : <WifiOff size={14} className="text-slate-300"/>}
+                    <span className={`text-[10px] font-bold ${connectionStatus === 'connected' ? 'text-green-600' : 'text-slate-400'}`}>
+                        {connectionStatus === 'connected' ? '已连接' : (connectionStatus === 'failed' ? '连接失败' : '检测中...')}
+                    </span>
+                </div>
+                <button onClick={handleDisconnect} className="text-xs text-red-400 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded-full flex items-center gap-1 hover:bg-red-100"><LogOut size={10} /> 断开</button>
+            </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50 dark:bg-slate-950">

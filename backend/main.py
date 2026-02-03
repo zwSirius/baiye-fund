@@ -74,12 +74,12 @@ class AkshareService:
     def get_time_phase():
         """
         Determine Market Phase:
-        POST_MARKET: 15:00 - Next Day 09:00 (Use Official Data)
+        POST_MARKET: 15:00 - Next Day 09:00 (Try Official Data, Fallback to Estimate)
         MARKET: 09:00 - 15:00 (Use Estimates)
         """
         now = datetime.utcnow() + timedelta(hours=8)
         t = now.time()
-        # 15:00 Close, allow buffer. Using 15:00 to 09:00 next day as Post Market
+        # 15:00 Close to 09:00 Next Day
         if t >= time(15, 0) or t < time(9, 0):
             return 'POST_MARKET'
         return 'MARKET'
@@ -191,22 +191,25 @@ class AkshareService:
             # Interface: stock_board_industry_summary_ths
             df = ak.stock_board_industry_summary_ths()
             records = []
-            for _, row in df.iterrows():
-                records.append({
-                    "name": str(row['板块']),
-                    "changePercent": SafeUtils.clean_num(row['涨跌幅']),
-                    "inflow": SafeUtils.clean_num(row['净流入'])
-                })
-            
-            records.sort(key=lambda x: x['changePercent'], reverse=True)
-            
-            # Top 5 and Bottom 5
-            res = {
-                "top": records[:5],
-                "bottom": records[-5:][::-1]
-            } 
-            cache_service.set(key, res)
-            return res
+            # Check necessary columns exist
+            if '板块' in df.columns and '涨跌幅' in df.columns:
+                for _, row in df.iterrows():
+                    records.append({
+                        "name": str(row['板块']),
+                        "changePercent": SafeUtils.clean_num(row['涨跌幅']),
+                        "inflow": SafeUtils.clean_num(row.get('净流入', 0))
+                    })
+                
+                records.sort(key=lambda x: x['changePercent'], reverse=True)
+                
+                # Top 5 and Bottom 5
+                res = {
+                    "top": records[:5],
+                    "bottom": records[-5:][::-1]
+                } 
+                cache_service.set(key, res)
+                return res
+            return {"top": [], "bottom": []}
         except Exception as e:
             logger.error(f"Sector Error: {e}")
             return {"top": [], "bottom": []}
@@ -242,7 +245,7 @@ class AkshareService:
         except:
             return {"gainers": [], "losers": []}
 
-    # --- 6. Official Daily NAV (30min Cache, Post-Market) ---
+    # --- 6. Official Daily NAV (LV1 - Batch) (30min Cache, Post-Market) ---
     @staticmethod
     def fetch_official_daily_cached():
         key = "fund_official_daily_em"
@@ -251,22 +254,59 @@ class AkshareService:
         
         try:
             # Interface: fund_open_fund_daily_em
+            # Returns: 基金代码, 基金简称, 单位净值, 前交易日-单位净值, 日增长率, 手续费
             df = ak.fund_open_fund_daily_em()
             res = {}
+            current_date_str = datetime.now().strftime('%Y-%m-%d')
             for r in df.to_dict('records'):
                 code = str(r.get('基金代码'))
                 res[code] = {
                     "nav": SafeUtils.clean_num(r.get('单位净值')),
+                    "prev_nav": SafeUtils.clean_num(r.get('前交易日-单位净值')),
                     "changePercent": SafeUtils.clean_num(r.get('日增长率')),
                     "fee": str(r.get('手续费', '0.00%')),
-                    "date": datetime.now().strftime('%Y-%m-%d')
+                    "date": current_date_str
                 }
             cache_service.set(key, res)
             return res
         except:
             return {}
 
-    # --- 7. Batch Estimates (5min Cache, LV2) ---
+    # --- 7. Single Fund History (LV2 - Single) (1h Cache) ---
+    @staticmethod
+    def fetch_fund_history_latest_cached(code: str):
+        """
+        LV2 Strategy: Get latest 2 days history for specific fund.
+        Used when LV1 batch interface returns 0.
+        """
+        key = f"fund_history_latest_{code}"
+        cached = cache_service.get(key, 3600)
+        if cached: return cached
+
+        try:
+            # Interface: fund_open_fund_info_em
+            df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
+            if not df.empty and len(df) >= 2:
+                # Sort descending by date just in case
+                df['净值日期'] = pd.to_datetime(df['净值日期'])
+                df = df.sort_values('净值日期', ascending=False)
+                
+                latest = df.iloc[0]
+                prev = df.iloc[1]
+                
+                res = {
+                    "nav": SafeUtils.clean_num(latest['单位净值']),
+                    "prev_nav": SafeUtils.clean_num(prev['单位净值']),
+                    "changePercent": SafeUtils.clean_num(latest['日增长率']),
+                    "date": latest['净值日期'].strftime('%Y-%m-%d')
+                }
+                cache_service.set(key, res)
+                return res
+        except:
+            pass
+        return None
+
+    # --- 8. Batch Estimates (5min Cache, LV3) ---
     @staticmethod
     def fetch_lv2_estimate_cached():
         key = "fund_estimate_lv2"
@@ -289,7 +329,7 @@ class AkshareService:
         except:
             return {}
 
-    # --- 8. Stock Real-time (30min Cache, for LV3) ---
+    # --- 9. Stock Real-time (30min Cache, for LV4) ---
     @staticmethod
     def fetch_stock_map_cached():
         key = "full_market_spot_map"
@@ -311,7 +351,7 @@ class AkshareService:
         cache_service.set(key, res)
         return res
 
-    # --- 9. Market Indices (Real-time/Short Cache) ---
+    # --- 10. Market Indices (Real-time/Short Cache) ---
     @staticmethod
     def fetch_market_indices_cached():
         key = "market_indices_main"
@@ -338,7 +378,7 @@ class AkshareService:
         cache_service.set(key, res)
         return res
 
-    # --- 10. LV1 JS API (Real-time) ---
+    # --- 11. LV1 JS API (Real-time Estimate) ---
     @staticmethod
     def fetch_lv1_js(code: str):
         try:
@@ -358,7 +398,7 @@ class AkshareService:
         except: pass
         return None
 
-    # --- 11. History (24h Cache) ---
+    # --- 12. History (24h Cache) ---
     @staticmethod
     def fetch_history_cached(code: str):
         key = f"history_{code}"
@@ -422,79 +462,96 @@ class FundController:
         phase = AkshareService.get_time_phase()
         
         # Pre-fetch Batch Data
-        t_lv2 = run_in_threadpool(AkshareService.fetch_lv2_estimate_cached)
-        t_official = run_in_threadpool(AkshareService.fetch_official_daily_cached)
-        t_market = run_in_threadpool(AkshareService.fetch_stock_map_cached) if phase == 'MARKET' else asyncio.sleep(0)
+        t_lv2_est = run_in_threadpool(AkshareService.fetch_lv2_estimate_cached)
+        t_official_batch = run_in_threadpool(AkshareService.fetch_official_daily_cached)
+        t_market = run_in_threadpool(AkshareService.fetch_stock_map_cached)
         
-        lv2_map, official_map, market_map = await asyncio.gather(t_lv2, t_official, t_market)
+        lv2_est_map, official_map, market_map = await asyncio.gather(t_lv2_est, t_official_batch, t_market)
         if official_map is None: official_map = {}
         if market_map is None: market_map = {}
 
         async def process_one(code):
             res = {
                 "fundcode": code, "name": "", 
-                "gsz": "0", "gszzl": "0", "dwjz": "0", 
+                "gsz": "0", "gszzl": "0", "dwjz": "0", "prev_dwjz": "0",
                 "gztime": "--", "source": "none"
             }
             
-            # === POST MARKET STRATEGY ===
+            # Helper to fill estimate data (used for MARKET phase OR Post-Market Fallback)
+            async def fill_estimate_data(r):
+                # Strategy: LV1 JS -> LV2 Batch -> LV3 Holdings
+                
+                # 1. JS API
+                js_data = await run_in_threadpool(AkshareService.fetch_lv1_js, code)
+                if js_data and SafeUtils.clean_num(js_data.get('gsz')) > 0:
+                    r.update(js_data)
+                    r['source'] = "official_data_1"
+                    return r
+                
+                # 2. Batch Estimate
+                if code in lv2_est_map:
+                    l2 = lv2_est_map[code]
+                    if SafeUtils.clean_num(l2.get('gsz')) > 0:
+                        r.update(l2)
+                        r['source'] = "official_data_2"
+                        return r
+                
+                # 3. Holdings Calc
+                holdings = await run_in_threadpool(AkshareService.fetch_holdings_cached, code)
+                if holdings:
+                    total_w = 0.0
+                    total_chg = 0.0
+                    for h in holdings:
+                        stock_c = h['code']
+                        w = h['percent']
+                        spot = market_map.get(stock_c)
+                        if spot:
+                            total_chg += spot['chg'] * w
+                            total_w += w
+                    
+                    if total_w > 0:
+                        est_chg = (total_chg / total_w) * 0.95
+                        r['gszzl'] = f"{est_chg:.2f}"
+                        r['source'] = "holdings_calc"
+                        r['gztime'] = datetime.now().strftime('%H:%M')
+                return r
+
+            # === POST MARKET STRATEGY (15:00 - 09:00) ===
             if phase == 'POST_MARKET':
+                # LV1: Official Daily Batch
                 if code in official_map:
                     off = official_map[code]
+                    # Only accept if NAV is valid (> 0)
+                    if off['nav'] > 0:
+                        res.update({
+                            "gsz": str(off['nav']),
+                            "dwjz": str(off['nav']),
+                            "prev_dwjz": str(off['prev_nav']),
+                            "gszzl": str(off['changePercent']),
+                            "gztime": off['date'],
+                            "source": "official_published",
+                            "fee": off['fee']
+                        })
+                        return res
+                
+                # LV2: Single History Fetch (Fallback if LV1 is missing/zero)
+                hist_data = await run_in_threadpool(AkshareService.fetch_fund_history_latest_cached, code)
+                if hist_data and hist_data['nav'] > 0:
                     res.update({
-                        "gsz": str(off['nav']),
-                        "dwjz": str(off['nav']),
-                        "gszzl": str(off['changePercent']),
-                        "gztime": off['date'],
-                        "source": "official_published",
-                        "fee": off['fee']
+                        "gsz": str(hist_data['nav']),
+                        "dwjz": str(hist_data['nav']),
+                        "prev_dwjz": str(hist_data['prev_nav']),
+                        "gszzl": str(hist_data['changePercent']),
+                        "gztime": hist_data['date'],
+                        "source": "official_published"
                     })
                     return res
-                # Fallback to LV2 if official not released yet
-                if code in lv2_map:
-                    res.update(lv2_map[code])
-                    res['source'] = "official_data_2"
-                    return res
-                return res
 
-            # === INTRA MARKET STRATEGY (LV1 -> LV2 -> LV3) ===
-            
-            # LV1: JS API
-            lv1 = await run_in_threadpool(AkshareService.fetch_lv1_js, code)
-            if lv1 and SafeUtils.clean_num(lv1.get('gsz')) > 0:
-                res.update(lv1)
-                res['source'] = "official_data_1"
-                return res
-            
-            # LV2: Batch API
-            if code in lv2_map:
-                l2 = lv2_map[code]
-                if SafeUtils.clean_num(l2.get('gsz')) > 0:
-                    res.update(l2)
-                    res['source'] = "official_data_2"
-                    return res
-            
-            # LV3: Holdings Calculation
-            holdings = await run_in_threadpool(AkshareService.fetch_holdings_cached, code)
-            if holdings:
-                total_w = 0.0
-                total_chg = 0.0
-                for h in holdings:
-                    stock_c = h['code']
-                    w = h['percent']
-                    spot = market_map.get(stock_c)
-                    if spot:
-                        total_chg += spot['chg'] * w
-                        total_w += w
-                
-                if total_w > 0:
-                    est_chg = (total_chg / total_w) * 0.95 # Damping factor
-                    res['gszzl'] = f"{est_chg:.2f}"
-                    res['source'] = "holdings_calc"
-                    res['gztime'] = datetime.now().strftime('%H:%M')
-                    return res
-            
-            return res
+                # Fallback: Official data not out yet, use Estimate logic but mark source
+                return await fill_estimate_data(res)
+
+            # === MARKET STRATEGY (09:00 - 15:00) ===
+            return await fill_estimate_data(res)
 
         tasks = [process_one(c) for c in codes]
         return await asyncio.gather(*tasks)

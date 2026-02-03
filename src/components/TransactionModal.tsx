@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Fund, Transaction, TransactionType } from '../types';
 import { getNavByDate } from '../services/fundService';
@@ -43,7 +44,6 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({ isOpen, onCl
   // 卖出: 赎回总额 = 份额 * 净值
   //       赎回费 = 赎回总额 * 费率
   //       到手金额 = 赎回总额 - 赎回费
-  // 这里为了统一交互，我们假设用户输入的是“发生金额”（买入是支付金额，卖出是期望到手金额的估算，或者简单点：卖出份额对应的资产）
   
   let estimatedShares = 0;
   let estimatedFee = 0;
@@ -82,56 +82,55 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({ isOpen, onCl
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose}></div>
-      <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl z-10 overflow-hidden animate-scale-in">
-        <div className={`p-4 text-white flex justify-between items-center ${type === 'BUY' ? 'bg-up-red' : 'bg-green-600'}`}>
-           <h3 className="font-bold text-lg">{type === 'BUY' ? '买入' : '卖出'} - {fund.name}</h3>
-           <button onClick={onClose}><X size={20}/></button>
+      <div className="bg-white rounded-2xl w-[90%] max-w-[320px] shadow-2xl z-10 overflow-hidden animate-scale-in">
+        <div className={`p-3 text-white flex justify-between items-center ${type === 'BUY' ? 'bg-up-red' : 'bg-green-600'}`}>
+           <h3 className="font-bold text-sm">{type === 'BUY' ? '买入' : '卖出'} - {fund.name}</h3>
+           <button onClick={onClose}><X size={18}/></button>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="p-4 space-y-3">
             {/* 日期选择 */}
             <div>
-                <label className="text-xs text-slate-500 mb-1 flex items-center gap-1">
-                    <Calendar size={12}/> 交易日期 (自动获取净值)
+                <label className="text-[10px] text-slate-500 mb-1 flex items-center gap-1">
+                    <Calendar size={12}/> 交易日期
                 </label>
-                <input 
-                    type="date" 
-                    value={date} 
-                    onChange={e => setDate(e.target.value)}
-                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium"
-                />
-            </div>
-
-            {/* 净值展示 */}
-            <div className="flex justify-between items-center bg-slate-50 p-3 rounded-lg border border-slate-100">
-                <span className="text-xs text-slate-500">当日净值</span>
-                {isLoadingNav ? (
-                    <Loader2 size={16} className="animate-spin text-blue-500" />
-                ) : (
-                    <span className="font-bold text-slate-700">{nav?.toFixed(4)}</span>
-                )}
+                <div className="flex gap-2">
+                    <input 
+                        type="date" 
+                        value={date} 
+                        onChange={e => setDate(e.target.value)}
+                        className="flex-1 p-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium"
+                    />
+                    <div className="flex items-center bg-slate-50 px-2 rounded-lg border border-slate-100">
+                         {isLoadingNav ? (
+                            <Loader2 size={12} className="animate-spin text-blue-500" />
+                        ) : (
+                            <span className="font-bold text-slate-700 text-xs">净值 {nav?.toFixed(4)}</span>
+                        )}
+                    </div>
+                </div>
             </div>
 
             {/* 金额输入 */}
             <div>
-                <label className="text-xs text-slate-500 mb-1 flex items-center gap-1">
-                    <DollarSign size={12}/> {type === 'BUY' ? '买入金额' : '卖出金额 (估算)'}
+                <label className="text-[10px] text-slate-500 mb-1 flex items-center gap-1">
+                    <DollarSign size={12}/> {type === 'BUY' ? '买入金额' : '卖出金额(估算)'}
                 </label>
                 <div className="relative">
-                    <span className="absolute left-3 top-2.5 text-slate-400 font-bold">¥</span>
+                    <span className="absolute left-3 top-2 text-slate-400 font-bold text-sm">¥</span>
                     <input 
                         type="number" 
                         value={amount} 
                         onChange={e => setAmount(e.target.value)}
                         placeholder="0.00"
-                        className="w-full pl-8 pr-4 py-2 border border-slate-200 rounded-lg text-lg font-bold focus:ring-2 focus:ring-blue-500 outline-none"
+                        className="w-full pl-7 pr-3 py-1.5 border border-slate-200 rounded-lg text-base font-bold focus:ring-2 focus:ring-blue-500 outline-none"
                     />
                 </div>
             </div>
 
             {/* 费率输入 */}
             <div>
-                <label className="text-xs text-slate-500 mb-1 flex items-center gap-1">
+                <label className="text-[10px] text-slate-500 mb-1 flex items-center gap-1">
                     <Calculator size={12}/> 手续费率 (%)
                 </label>
                 <input 
@@ -140,26 +139,26 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({ isOpen, onCl
                     onChange={e => setFeeRate(e.target.value)}
                     placeholder="0.15"
                     step="0.01"
-                    className="w-full p-2 border border-slate-200 rounded-lg text-sm font-medium"
+                    className="w-full p-1.5 border border-slate-200 rounded-lg text-xs font-medium"
                 />
             </div>
 
             {/* 结果预览 */}
-            <div className="bg-blue-50 p-4 rounded-xl space-y-2">
-                <div className="flex justify-between text-sm">
+            <div className="bg-blue-50 p-3 rounded-xl space-y-1">
+                <div className="flex justify-between text-xs">
                     <span className="text-slate-500">预估手续费</span>
                     <span className="font-medium">¥{estimatedFee.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between text-sm">
+                <div className="flex justify-between text-xs">
                     <span className="text-slate-500">确认份额</span>
-                    <span className="font-bold text-blue-700 text-lg">{estimatedShares.toFixed(2)} 份</span>
+                    <span className="font-bold text-blue-700 text-sm">{estimatedShares.toFixed(2)} 份</span>
                 </div>
             </div>
 
             <button 
                 onClick={handleConfirm}
                 disabled={!nav || !numAmount || numAmount <= 0}
-                className={`w-full py-3 rounded-xl text-white font-bold shadow-lg transition active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${type === 'BUY' ? 'bg-up-red shadow-red-200' : 'bg-green-600 shadow-green-200'}`}
+                className={`w-full py-2.5 rounded-xl text-white font-bold text-sm shadow-lg transition active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${type === 'BUY' ? 'bg-up-red shadow-red-200' : 'bg-green-600 shadow-green-200'}`}
             >
                 确认{type === 'BUY' ? '买入' : '卖出'}
             </button>

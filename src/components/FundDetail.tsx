@@ -2,7 +2,8 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Fund, Transaction } from '../types';
 import { getFundHistoryData, fetchFundDetails } from '../services/fundService';
-import { ChevronLeft, Edit2, Trash2, History, Loader2, Layers, Tag, TrendingUp, TrendingDown, PieChart as PieChartIcon } from 'lucide-react';
+import { calculateFundMetrics, formatMoney } from '../utils/finance';
+import { ChevronLeft, Edit2, Trash2, History, Loader2, Layers, Tag, TrendingUp, TrendingDown, PieChart as PieChartIcon, Wallet } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
 
 interface FundDetailProps {
@@ -96,10 +97,20 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
   const displayFund = detailedFund;
   const isPortfolio = displayFund.holdingShares > 0;
 
+  // Calculate Holdings Data
+  const marketValue = displayFund.estimatedNav * displayFund.holdingShares;
+  const costValue = displayFund.holdingCost * displayFund.holdingShares;
+  const totalProfit = marketValue - costValue + (displayFund.realizedProfit || 0);
+  const totalReturnPercent = costValue > 0 ? (totalProfit / costValue) * 100 : 0;
+
   return (
-    <div className="fixed inset-0 bg-slate-50 dark:bg-slate-950 z-50 overflow-y-auto animate-fade-in flex flex-col pt-detail-header">
-      {/* Navbar */}
-      <div className="bg-white/90 backdrop-blur-md dark:bg-slate-900/90 sticky top-0 z-20 px-4 py-3 flex items-center justify-between shadow-sm border-b border-slate-100 dark:border-slate-800 transition-colors">
+    <div className="fixed inset-0 bg-slate-50 dark:bg-slate-950 z-50 overflow-y-auto animate-fade-in flex flex-col">
+      {/* 
+         Fixed Header with Frosted Glass 
+         Using 'pt-detail-header' here ensures the content starts lower down,
+         and the background covers the entire top area including status bar.
+      */}
+      <div className="fixed top-0 left-0 right-0 z-50 bg-white/90 backdrop-blur-xl dark:bg-slate-900/90 pt-detail-header px-4 pb-3 flex items-center justify-between shadow-sm border-b border-slate-100 dark:border-slate-800 transition-colors">
         <div className="flex items-center">
             <button onClick={onBack} className="p-2 -ml-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition text-slate-600 dark:text-slate-300">
             <ChevronLeft size={24} />
@@ -125,6 +136,9 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
             </button>
         </div>
       </div>
+
+      {/* Spacer for Fixed Header - aligns content below the header */}
+      <div className="pt-detail-header mt-[60px]"></div>
 
       <div className="flex-1 pb-24">
           
@@ -164,6 +178,50 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                     )}
               </div>
           </div>
+          
+          {/* Holdings Info Module */}
+          {isPortfolio && (
+              <div className="px-4 mb-4">
+                  <div className="bg-white dark:bg-slate-900 rounded-xl p-4 shadow-sm border border-slate-100 dark:border-slate-800">
+                      <div className="flex items-center gap-2 mb-3 text-sm font-bold text-slate-800 dark:text-slate-100">
+                          <Wallet size={16} className="text-blue-500"/> 持仓详情
+                      </div>
+                      <div className="grid grid-cols-3 gap-y-4 gap-x-2">
+                          <div>
+                              <div className="text-[10px] text-slate-400 mb-0.5">持仓金额</div>
+                              <div className="text-sm font-bold text-slate-800 dark:text-white">{formatMoney(marketValue, false)}</div>
+                          </div>
+                          <div className="text-center">
+                              <div className="text-[10px] text-slate-400 mb-0.5">持仓份额</div>
+                              <div className="text-sm font-bold text-slate-800 dark:text-white">{displayFund.holdingShares.toFixed(2)}</div>
+                          </div>
+                          <div className="text-right">
+                              <div className="text-[10px] text-slate-400 mb-0.5">持仓成本</div>
+                              <div className="text-sm font-bold text-slate-800 dark:text-white">{displayFund.holdingCost.toFixed(4)}</div>
+                          </div>
+                          
+                          <div>
+                              <div className="text-[10px] text-slate-400 mb-0.5">当日盈亏</div>
+                              <div className={`text-sm font-bold ${displayFund.estimatedProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>
+                                  {displayFund.estimatedProfit > 0 ? '+' : ''}{formatMoney(displayFund.estimatedProfit, false)}
+                              </div>
+                          </div>
+                          <div className="text-center">
+                              <div className="text-[10px] text-slate-400 mb-0.5">累计盈亏</div>
+                              <div className={`text-sm font-bold ${totalProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>
+                                  {totalProfit > 0 ? '+' : ''}{formatMoney(totalProfit, false)}
+                              </div>
+                          </div>
+                          <div className="text-right">
+                              <div className="text-[10px] text-slate-400 mb-0.5">累计收益率</div>
+                              <div className={`text-sm font-bold ${totalReturnPercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
+                                  {totalReturnPercent > 0 ? '+' : ''}{totalReturnPercent.toFixed(2)}%
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          )}
 
           <div className="px-4 mb-2">
               <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">

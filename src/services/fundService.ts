@@ -1,5 +1,3 @@
-
-
 import { Fund, MarketOverview, SectorIndex } from '../types';
 import { calculateFundMetrics } from '../utils/finance';
 
@@ -227,27 +225,38 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
         let estimateTime = "";
 
         const apiDwjz = parseFloat(realData.dwjz);
+        const apiPrevDwjz = parseFloat(realData.prev_dwjz); // Backend now returns this if official
         const apiGsz = parseFloat(realData.gsz);
         const apiGszZl = parseFloat(realData.gszzl);
 
-        // 逻辑修正：
-        // 1. 如果有 dwjz (单位净值)，则更新 lastNav。
-        // 2. 如果是 official_published (盘后)，则 estimatedNav = dwjz, estimatedChangePercent = gszzl (日增长率)。
-        // 3. 如果是盘中 (official_data_1/2, holdings_calc)，则更新 estimatedNav 和 estimatedChangePercent。
-
-        if (!isNaN(apiDwjz) && apiDwjz > 0) {
-            lastNav = apiDwjz;
-        }
-
         if (source === 'official_published') {
-             if (lastNav > 0) estimatedNav = lastNav;
-             estimatedChangePercent = parseFloat(realData.gszzl || "0"); // 日增长率
+             // Official Data
+             if (!isNaN(apiDwjz) && apiDwjz > 0) estimatedNav = apiDwjz;
+             
+             // IMPORTANT: For official data, we need the "Previous NAV" (Yesterday's official) 
+             // to calculate profit: (TodayOfficial - YesterdayOfficial) * Shares
+             // If we used apiDwjz as lastNav, the difference would be 0.
+             if (!isNaN(apiPrevDwjz) && apiPrevDwjz > 0) {
+                 lastNav = apiPrevDwjz;
+             } else if (!isNaN(apiDwjz) && apiDwjz > 0 && !isNaN(apiGszZl)) {
+                 // Fallback: If prev not provided, reverse calc from today + change%
+                 lastNav = apiDwjz / (1 + apiGszZl / 100);
+             }
+
+             if (!isNaN(apiGszZl)) estimatedChangePercent = apiGszZl;
+             
         } else {
-             // 盘中估值
+             // Intra-day Estimates
+             // Here, lastNav should be the "Official NAV from Yesterday" which usually is stored in DB.
+             // But if realData.dwjz is valid (it implies last closed day NAV), we update it.
+             if (!isNaN(apiDwjz) && apiDwjz > 0) {
+                lastNav = apiDwjz;
+             }
+
              if (!isNaN(apiGsz) && apiGsz > 0) estimatedNav = apiGsz;
              if (!isNaN(apiGszZl)) estimatedChangePercent = apiGszZl;
              
-             // 如果 LV3 (holdings_calc) 只返回了涨幅，我们需要根据 lastNav 算出估值
+             // If LV3 (holdings_calc) only returns change%, calc NAV
              if (source === 'holdings_calc' && lastNav > 0 && !isNaN(estimatedChangePercent)) {
                  estimatedNav = lastNav * (1 + estimatedChangePercent / 100);
              }
@@ -255,7 +264,7 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
 
         if (realData.gztime) estimateTime = realData.gztime;
         if (realData.name && realData.name.length > 0) name = realData.name;
-        if (realData.jzrq) lastNavDate = realData.jzrq; // 净值日期
+        if (realData.jzrq) lastNavDate = realData.jzrq;
 
         const profitToday = calculateFundMetrics(
             fund.holdingShares,
