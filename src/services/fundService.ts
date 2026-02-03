@@ -70,16 +70,90 @@ export const exportData = () => {
 
 export const importData = (jsonString: string): boolean => {
     try {
-        const data = JSON.parse(jsonString);
-        if (data.funds && data.groups) {
-            saveFundsToLocal(data.funds);
-            saveGroupsToLocal(data.groups);
-            if (data.marketConfig) saveMarketCodes(data.marketConfig);
-            return true;
+        let parsed: any;
+        try {
+            parsed = JSON.parse(jsonString);
+        } catch (e) {
+            console.error("JSON Parse Error:", e);
+            return false;
         }
-        return false;
+
+        // 1. 结构兼容处理 (Structure Compatibility)
+        // Handle wrapped structure if imported from a full backup envelope
+        if (parsed.data && (parsed.data.funds || parsed.data.groups)) {
+            parsed = parsed.data;
+        }
+
+        // 2. 基础校验 & 容错 (Basic Validation & Fault Tolerance)
+        // If neither funds nor groups array exists, verify if it's a legacy array format
+        if (!Array.isArray(parsed.funds) && !Array.isArray(parsed.groups)) {
+             // Fallback: if user pasted just an array of funds
+             if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].code) {
+                 parsed = { funds: parsed, groups: [] };
+             } else {
+                 throw new Error("未找到有效的基金或分组数据结构");
+             }
+        }
+
+        // 3. 数据清洗与迁移 (Data Cleaning & Migration)
+        const rawFunds = Array.isArray(parsed.funds) ? parsed.funds : [];
+        
+        // Helper to ensure numbers are numbers (handle "100" string or null)
+        const safeNum = (val: any) => {
+            const n = parseFloat(val);
+            return isNaN(n) ? 0 : n;
+        };
+
+        const cleanFunds: Fund[] = rawFunds.map((item: any) => ({
+            ...item,
+            // Ensure ID exists
+            id: String(item.id || `fund_${item.code}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`),
+            // Ensure strings
+            code: String(item.code || ''),
+            name: String(item.name || 'Unknown Fund'),
+            // Ensure numeric fields are safe
+            holdingShares: safeNum(item.holdingShares),
+            holdingCost: safeNum(item.holdingCost),
+            realizedProfit: safeNum(item.realizedProfit),
+            lastNav: safeNum(item.lastNav),
+            estimatedNav: safeNum(item.estimatedNav),
+            estimatedChangePercent: safeNum(item.estimatedChangePercent),
+            estimatedProfit: safeNum(item.estimatedProfit),
+            // Ensure arrays
+            holdings: Array.isArray(item.holdings) ? item.holdings : [],
+            tags: Array.isArray(item.tags) ? item.tags : [],
+            // Transaction cleaning (Crucial for date fixes)
+            transactions: Array.isArray(item.transactions) ? item.transactions.map((t: any) => ({
+                ...t,
+                amount: safeNum(t.amount),
+                shares: safeNum(t.shares),
+                nav: safeNum(t.nav),
+                fee: safeNum(t.fee),
+                // Fix Date: ensure it's a string YYYY-MM-DD
+                date: t.date ? String(t.date).split('T')[0] : new Date().toISOString().split('T')[0]
+            })) : []
+        }));
+
+        // Handle Groups - Auto-fill if missing
+        let cleanGroups = Array.isArray(parsed.groups) ? parsed.groups : [];
+        if (cleanGroups.length === 0) {
+            cleanGroups = [{ id: 'default', name: '我的账户', isDefault: true }];
+        }
+
+        // Handle Market Config
+        const cleanMarketConfig = Array.isArray(parsed.marketConfig) ? parsed.marketConfig : null;
+
+        // 4. Perform Update
+        saveFundsToLocal(cleanFunds);
+        saveGroupsToLocal(cleanGroups);
+        if (cleanMarketConfig) {
+            saveMarketCodes(cleanMarketConfig);
+        }
+
+        console.log(`Import success: ${cleanFunds.length} funds, ${cleanGroups.length} groups`);
+        return true;
     } catch (e) {
-        console.error("Import failed", e);
+        console.error("Import failed details:", e);
         return false;
     }
 };
