@@ -34,7 +34,7 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = ({ marketCodes, o
         loadData(false);
     }, [marketCodes]);
 
-    const Skeleton = ({ className }: { className: string }) => (
+    const Skeleton: React.FC<{ className: string }> = ({ className }) => (
         <div className={`animate-pulse bg-slate-200 dark:bg-slate-800 rounded ${className}`}></div>
     );
 
@@ -262,7 +262,7 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = ({ marketCodes, o
     );
 };
 
-const SectorRow = ({ rank, name, change, stock, type }: { rank: number, name: string, change: number, stock: string, type: 'up'|'down' }) => (
+const SectorRow: React.FC<{ rank: number, name: string, change: number, stock: string, type: 'up'|'down' }> = ({ rank, name, change, stock, type }) => (
     <div className="flex items-center justify-between text-xs">
         <div className="flex items-center gap-1.5 w-1/2 min-w-0">
             <span className={`w-3.5 h-3.5 flex items-center justify-center rounded text-[9px] font-bold ${rank === 1 ? 'bg-orange-100 text-orange-600' : 'bg-slate-100 text-slate-500 dark:bg-slate-800'}`}>
@@ -276,7 +276,7 @@ const SectorRow = ({ rank, name, change, stock, type }: { rank: number, name: st
     </div>
 );
 
-const EmptyState = ({ text }: { text: string }) => (
+const EmptyState: React.FC<{ text: string }> = ({ text }) => (
     <div className="flex flex-col items-center justify-center py-8 text-slate-400">
         <AlertCircle size={24} className="mb-2 opacity-30"/>
         <span className="text-xs">{text}</span>

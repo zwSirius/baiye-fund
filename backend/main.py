@@ -42,9 +42,9 @@ INDEX_SYMBOL_MAP = {
 # 修正：右侧的值必须存在于 fetch_global_indices_cached 或 fetch_etf_spot_cached 的返回 Key 中
 SPECIAL_MAPPING = {
     "000218": "518660",   # 黄金 -> 黄金ETF (场内)
-    "001186": "1.000300", # 沪深300 -> 300指数 (A股指数)
-    "006479": ".NDX",     # 广发纳指 -> 纳斯达克100 (修正为 .NDX)
-    "000614": "GDAXI",    # 华安德国 -> 德国DAX (修正为 GDAXI)
+    "001186": "000300",   # 华夏沪深300联接 -> 沪深300指数 (A股指数代码通常为 000300)
+    "006479": ".NDX",     # 广发纳指 -> 纳斯达克100
+    "000614": "GDAXI",    # 华安德国 -> 德国DAX
     "000071": ".IXIC",    # 纳斯达克 -> .IXIC
     # 可根据需要扩展
 }
@@ -197,7 +197,9 @@ class AkshareService:
                     }
                     res[code] = data
                     res[name] = data
-            except: pass
+            except Exception as e: 
+                # A股指数获取偶尔会超时，不影响整体
+                pass
             
         # 2. 外盘指数 (index_global_spot_em)
         try:
@@ -222,7 +224,8 @@ class AkshareService:
                     target_key = INDEX_SYMBOL_MAP[name]
                     res[target_key] = data
                     
-        except: pass
+        except Exception as e:
+            logger.error(f"Global Indices Fetch Error: {e}")
         
         cache_service.set(key, res)
         return res
@@ -256,18 +259,29 @@ class AkshareService:
         
         try:
             df = ak.stock_board_industry_name_em()
+            
+            # 兼容不同的列名 (akshare 接口变动频繁)
+            change_col = '涨跌幅'
+            if '最新涨跌幅' in df.columns:
+                change_col = '最新涨跌幅'
+            elif '涨跌幅' in df.columns:
+                change_col = '涨跌幅'
+            else:
+                logger.error(f"Sector ranking: Column '{change_col}' not found. Columns: {df.columns.tolist()}")
+                return {"top": [], "bottom": []}
+
             # 确保列名正确并排序
-            df['涨跌幅'] = pd.to_numeric(df['涨跌幅'], errors='coerce')
-            df.sort_values('涨跌幅', ascending=False, inplace=True)
+            df['sort_val'] = pd.to_numeric(df[change_col], errors='coerce')
+            df.sort_values('sort_val', ascending=False, inplace=True)
             
             top = df.head(6).to_dict('records')
             bottom = df.tail(6).to_dict('records')
             
             def fmt(rows):
                 return [{
-                    "name": str(r['板块名称']),
-                    "changePercent": SafeUtils.clean_num(r['涨跌幅']),
-                    "leadingStock": str(r['领涨股票'])
+                    "name": str(r.get('板块名称', r.get('名称', ''))),
+                    "changePercent": SafeUtils.clean_num(r.get(change_col)),
+                    "leadingStock": str(r.get('领涨股票', ''))
                 } for r in rows]
 
             res = {"top": fmt(top), "bottom": fmt(bottom)[::-1]} 
@@ -290,36 +304,44 @@ class AkshareService:
         try:
             df = ak.stock_market_fund_flow()
             if not df.empty:
-                last = df.iloc[-1]
+                # 转化为字典以便安全访问
+                last = df.iloc[-1].to_dict()
                 res["market"] = {
-                    "date": str(last['日期']),
-                    "main_net_inflow": SafeUtils.clean_num(last['主力净流入-净额']),
-                    "main_net_ratio": SafeUtils.clean_num(last['主力净流入-净占比']),
-                    "sh_close": SafeUtils.clean_num(last['上证-收盘价']),
-                    "sh_change": SafeUtils.clean_num(last['上证-涨跌幅']),
-                    "sz_close": SafeUtils.clean_num(last['深证-收盘价']),
-                    "sz_change": SafeUtils.clean_num(last['深证-涨跌幅']),
+                    "date": str(last.get('日期', '')),
+                    "main_net_inflow": SafeUtils.clean_num(last.get('主力净流入-净额')),
+                    "main_net_ratio": SafeUtils.clean_num(last.get('主力净流入-净占比')),
+                    "sh_close": SafeUtils.clean_num(last.get('上证-收盘价')),
+                    "sh_change": SafeUtils.clean_num(last.get('上证-涨跌幅')),
+                    "sz_close": SafeUtils.clean_num(last.get('深证-收盘价')),
+                    "sz_change": SafeUtils.clean_num(last.get('深证-涨跌幅')),
                 }
-        except: pass
+        except Exception as e:
+            logger.error(f"Market fund flow error: {e}")
 
         # 2. 行业资金流
         try:
             df_sec = ak.stock_sector_fund_flow_rank(indicator="今日", sector_type="行业资金流")
             if not df_sec.empty:
                 chg_col = '今日涨跌幅' if '今日涨跌幅' in df_sec.columns else '涨跌幅'
-                df_sec['net'] = pd.to_numeric(df_sec['主力净流入-净额'], errors='coerce')
-                df_sec.sort_values('net', ascending=False, inplace=True)
+                net_col = '主力净流入-净额'
                 
-                def fmt(rows):
-                    return [{
-                        "name": str(r['名称']),
-                        "change": SafeUtils.clean_num(r.get(chg_col)),
-                        "netInflow": SafeUtils.clean_num(r['net'])
-                    } for r in rows]
-                
-                res["sectorFlow"]["inflow"] = fmt(df_sec.head(5).to_dict('records'))
-                res["sectorFlow"]["outflow"] = fmt(df_sec.tail(5).to_dict('records')[::-1])
-        except: pass
+                if net_col in df_sec.columns:
+                    df_sec['net'] = pd.to_numeric(df_sec[net_col], errors='coerce')
+                    df_sec.sort_values('net', ascending=False, inplace=True)
+                    
+                    def fmt(rows):
+                        return [{
+                            "name": str(r.get('名称', '')),
+                            "change": SafeUtils.clean_num(r.get(chg_col)),
+                            "netInflow": SafeUtils.clean_num(r.get('net'))
+                        } for r in rows]
+                    
+                    res["sectorFlow"]["inflow"] = fmt(df_sec.head(5).to_dict('records'))
+                    res["sectorFlow"]["outflow"] = fmt(df_sec.tail(5).to_dict('records')[::-1])
+                else:
+                    logger.warning(f"Sector flow: Column '{net_col}' not found.")
+        except Exception as e:
+             logger.error(f"Sector fund flow error: {e}")
         
         cache_service.set(key, res)
         return res
