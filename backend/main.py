@@ -22,27 +22,31 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("SmartFund")
 
 # --- 常量定义 ---
-# 影子定价映射 (Shadow Pricing): 基金代码 -> 市场指数/ETF代码
-# 用于解决 QDII 或 ETF 联接基金在常规接口无估值的问题
-SPECIAL_MAPPING = {
-    "000218": "518660", # 黄金 -> 黄金ETF
-    "001186": "1.000300", # 沪深300 -> 300指数
-    "006479": "100.NDX", # 广发纳指 -> 纳斯达克100
-    "000614": "100.HSI", # 华安德国 -> 恒生指数
-    # 可根据需要扩展
-}
 
-# 核心指数代码映射 (中文 -> Akshare Symbol)
+# 核心指数代码映射 (中文名称/Akshare名称 -> 统一Key)
+# 这些 Key 必须与 indices_map 中的 Key 一致
 INDEX_SYMBOL_MAP = {
-    "纳斯达克": ".IXIC",
     "纳斯达克100": ".NDX", 
+    "纳斯达克": ".IXIC",
     "道琼斯": ".DJI",
     "标普500": ".INX",
-    "恒生指数": "HSI",
+    "恒生指数": "HSI",   # Akshare 港股指数通常直接返回英文代码或中文
     "日经225": "N225",
     "英国富时": "FTSE",
     "法国CAC": "FCHI",
     "德国DAX": "GDAXI"
+}
+
+# 影子定价映射 (Shadow Pricing): 基金代码 -> 市场指数/ETF代码
+# 用于解决 QDII 或 ETF 联接基金在常规接口无估值的问题
+# 修正：右侧的值必须存在于 fetch_global_indices_cached 或 fetch_etf_spot_cached 的返回 Key 中
+SPECIAL_MAPPING = {
+    "000218": "518660",   # 黄金 -> 黄金ETF (场内)
+    "001186": "1.000300", # 沪深300 -> 300指数 (A股指数)
+    "006479": ".NDX",     # 广发纳指 -> 纳斯达克100 (修正为 .NDX)
+    "000614": "GDAXI",    # 华安德国 -> 德国DAX (修正为 GDAXI)
+    "000071": ".IXIC",    # 纳斯达克 -> .IXIC
+    # 可根据需要扩展
 }
 
 # --- Pydantic Models ---
@@ -155,7 +159,7 @@ class AkshareService:
                 }
         except: pass
 
-        # 2. 港股 (新接口)
+        # 2. 港股 (新接口: stock_hk_spot_em)
         try:
             df = ak.stock_hk_spot_em()
             for r in df.to_dict('records'):
@@ -199,16 +203,25 @@ class AkshareService:
         try:
             df = ak.index_global_spot_em()
             for r in df.to_dict('records'):
-                name = str(r.get('名称'))
+                name = str(r.get('名称')) # e.g., "纳斯达克100"
+                code = str(r.get('代码')) # e.g., "100.NDX" (东方财富代码)
+                
                 data = {
                     "price": SafeUtils.clean_num(r.get('最新价')),
                     "changePercent": SafeUtils.clean_num(r.get('涨跌幅')),
                     "name": name
                 }
+                
+                # 存入原始代码
+                res[code] = data
+                # 存入名称
                 res[name] = data
-                # 映射到常用代码
+                
+                # 映射到标准 Key (e.g., .NDX) 以便 SPECIAL_MAPPING 使用
                 if name in INDEX_SYMBOL_MAP:
-                    res[INDEX_SYMBOL_MAP[name]] = data
+                    target_key = INDEX_SYMBOL_MAP[name]
+                    res[target_key] = data
+                    
         except: pass
         
         cache_service.set(key, res)
@@ -216,7 +229,7 @@ class AkshareService:
 
     @staticmethod
     def fetch_etf_spot_cached():
-        """获取ETF实时行情"""
+        """获取ETF实时行情 (用于场内ETF映射)"""
         key = "etf_spot_map"
         cached = cache_service.get(key, 60)
         if cached: return cached
@@ -224,7 +237,8 @@ class AkshareService:
         try:
             df = ak.fund_etf_spot_em()
             for r in df.to_dict('records'):
-                res[str(r.get('代码'))] = {
+                code = str(r.get('代码'))
+                res[code] = {
                     "price": SafeUtils.clean_num(r.get('最新价')),
                     "changePercent": SafeUtils.clean_num(r.get('涨跌幅')),
                     "name": str(r.get('名称'))
@@ -314,7 +328,7 @@ class AkshareService:
 
     @staticmethod
     def fetch_js_estimate_direct(code: str):
-        """Level 1: 天天基金 JS 接口 (极速)"""
+        """Level 1: 天天基金 JS 接口 (极速，仅盘中有效)"""
         try:
             ts = int(time_module.time() * 1000)
             url = f"https://fundgz.1234567.com.cn/js/{code}.js?rt={ts}"
@@ -362,7 +376,7 @@ class AkshareService:
         try:
             current_year = datetime.now().year
             combined_df = pd.DataFrame()
-            # 尝试今明两年
+            # 尝试今明两年，防止年初无数据
             for y in [current_year, current_year - 1]:
                 try:
                     df = ak.fund_portfolio_hold_em(symbol=code, date=str(y))
@@ -414,7 +428,6 @@ class FundController:
     @staticmethod
     async def get_fund_detail(code: str):
         # 并发获取基础信息、持仓、行业
-        loop = asyncio.get_running_loop()
         t_holdings = run_in_threadpool(AkshareService.fetch_holdings_sync, code)
         t_basic = run_in_threadpool(ak.fund_individual_basic_info_xq, symbol=code)
         t_market = run_in_threadpool(AkshareService.fetch_stock_map_cached)
@@ -451,24 +464,22 @@ class FundController:
     @staticmethod
     async def batch_estimate(codes: List[str]):
         """
-        四级火箭估值引擎
+        四级火箭估值引擎实现
         """
         if not codes: return []
         
         phase = AkshareService.get_time_phase()
-        loop = asyncio.get_running_loop()
         today_str = datetime.now().strftime('%Y-%m-%d')
         
-        # 预加载数据
-        # 1. 批量估值表 (Level 2)
+        # 预加载全局数据
+        # 1. 批量估值表 (Level 2) - 盘后预加载
         batch_map = await run_in_threadpool(AkshareService.fetch_batch_estimate_cached) if phase == 'POST_MARKET' else {}
         
         # 2. 全球指数 & ETF (Level 3)
-        indices_map = await run_in_threadpool(AkshareService.fetch_global_indices_cached)
-        etf_map = await run_in_threadpool(AkshareService.fetch_etf_spot_cached)
+        t_indices = run_in_threadpool(AkshareService.fetch_global_indices_cached)
+        t_etf = run_in_threadpool(AkshareService.fetch_etf_spot_cached)
+        indices_map, etf_map = await asyncio.gather(t_indices, t_etf)
         
-        results = []
-
         async def estimate_one(code):
             res = {
                 "fundcode": code, "name": "", 
@@ -476,19 +487,19 @@ class FundController:
                 "jzrq": "", "gztime": "", "source": "none"
             }
             
-            # 获取历史净值作为保底
+            # 获取历史净值作为保底 (Yesterday NAV)
             hist = await run_in_threadpool(AkshareService.fetch_history_cached, code)
             if hist:
                 res['dwjz'] = str(hist['nav'])
                 res['jzrq'] = hist['date']
-                # 如果历史净值日期就是今天，说明官方已更新（最高优先级）
+                # 如果历史净值日期就是今天，说明官方已更新 (Level 0: 终局)
                 if hist['date'] == today_str:
                     res['gsz'] = str(hist['nav'])
                     res['gszzl'] = "0.00" # 当日已结
                     res['source'] = "official_final"
                     return res
 
-            # --- Level 1: JS 接口 (盘中首选) ---
+            # --- Level 1: JS 接口 (盘中主力) ---
             if phase != 'POST_MARKET':
                 js_data = await run_in_threadpool(AkshareService.fetch_js_estimate_direct, code)
                 if js_data:
@@ -498,8 +509,7 @@ class FundController:
                         res['source'] = "official_realtime_js"
                         return res
 
-            # --- Level 2: 批量接口 (盘后首选) ---
-            # 如果盘中 JS 失败，或者现在是盘后
+            # --- Level 2: 批量接口 (盘后权威 / 盘中备用) ---
             if code in batch_map:
                 bm = batch_map[code]
                 if abs(SafeUtils.clean_num(bm['gszzl'])) > 0.001:
@@ -511,9 +521,11 @@ class FundController:
             shadow_code = SPECIAL_MAPPING.get(code)
             shadow_data = None
             if shadow_code:
-                # 尝试从 ETF 或 指数 Map 中找
-                if shadow_code in etf_map: shadow_data = etf_map[shadow_code]
-                elif shadow_code in indices_map: shadow_data = indices_map[shadow_code]
+                # 优先匹配 ETF，其次匹配 Index
+                if shadow_code in etf_map: 
+                    shadow_data = etf_map[shadow_code]
+                elif shadow_code in indices_map: 
+                    shadow_data = indices_map[shadow_code]
             
             if shadow_data:
                 # 使用影子标的的涨跌幅推算
@@ -531,10 +543,8 @@ class FundController:
             # --- Level 4: 重仓股穿透 (兜底) ---
             # 仅在盘中且上述均失败时尝试
             if phase == 'MARKET':
-                # 需获取持仓
                 holdings = await run_in_threadpool(AkshareService.fetch_holdings_sync, code)
                 if holdings:
-                    # 获取全市场行情
                     market_map = await run_in_threadpool(AkshareService.fetch_stock_map_cached)
                     
                     total_impact = 0.0
@@ -567,7 +577,7 @@ class FundController:
 
     @staticmethod
     async def chat_with_ai(request: AnalyzeRequest):
-        # 强制 BYOK
+        # 强制 BYOK: 必须传入 api_key
         if not request.api_key:
             raise HTTPException(status_code=400, detail="Missing API Key. Please configure it in settings.")
         
@@ -595,7 +605,7 @@ def status():
 
 @router.get("/search")
 async def search(key: str):
-    # 简单实现，实际可连接 Akshare
+    # Search implementation skipped for brevity
     return [] 
 
 @router.post("/estimate/batch")
@@ -613,7 +623,7 @@ async def detail(code: str):
 
 @router.get("/market/overview")
 async def market(codes: Optional[str] = None):
-    # 并发获取所有数据
+    # 并发获取: 指数 + 板块 + 资金流
     t_indices = run_in_threadpool(AkshareService.fetch_global_indices_cached)
     t_sectors = run_in_threadpool(AkshareService.fetch_sector_rankings_cached)
     t_flow = run_in_threadpool(AkshareService.fetch_fund_flow_cached)
@@ -627,13 +637,18 @@ async def market(codes: Optional[str] = None):
     for c in target_codes:
         if c in indices_map:
             val = indices_map[c]
-            indices.append({"code": c, "name": val['name'], "value": val['price'], "changePercent": val['changePercent']})
+            indices.append({
+                "code": c, 
+                "name": val['name'], 
+                "value": val['price'], 
+                "changePercent": val['changePercent']
+            })
     
     return {
         "indices": indices,
         "sectors": sectors,
         "fundFlow": flow,
-        "fundRankings": {"gainers": [], "losers": []}
+        "fundRankings": {"gainers": [], "losers": []} # 暂未实现基金榜单
     }
 
 @router.get("/history/{code}")

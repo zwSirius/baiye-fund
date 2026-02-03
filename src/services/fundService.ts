@@ -79,24 +79,23 @@ export const importData = (jsonString: string): boolean => {
         }
 
         // 1. 结构兼容处理 (Structure Compatibility)
-        // 支持直接粘贴数组，也支持粘贴完整的备份对象
+        // Handle wrapped structure if imported from a full backup envelope
         if (parsed.data && (parsed.data.funds || parsed.data.groups)) {
             parsed = parsed.data;
-        } else if (parsed.funds || parsed.groups) {
-            // 标准结构，无需处理
         } else if (Array.isArray(parsed)) {
-            // 假设用户只复制了 funds 数组
-            parsed = { funds: parsed, groups: [] };
+             // Fallback: if user pasted just an array of funds
+             parsed = { funds: parsed, groups: [] };
         }
 
-        // 2. 基础校验 (Basic Validation)
+        // 2. 基础校验 & 容错 (Basic Validation & Fault Tolerance)
         if (!Array.isArray(parsed.funds) && !Array.isArray(parsed.groups)) {
-             throw new Error("未找到有效的基金数据");
+             throw new Error("未找到有效的基金或分组数据结构");
         }
 
-        // 3. 数据清洗与类型迁移 (Data Migration)
+        // 3. 数据清洗与迁移 (Data Cleaning & Migration)
         const rawFunds = Array.isArray(parsed.funds) ? parsed.funds : [];
         
+        // Helper to ensure numbers are numbers
         const safeNum = (val: any) => {
             const n = parseFloat(val);
             return isNaN(n) ? 0 : n;
@@ -104,11 +103,12 @@ export const importData = (jsonString: string): boolean => {
 
         const cleanFunds: Fund[] = rawFunds.map((item: any) => ({
             ...item,
-            // 强制转换为字符串
+            // Ensure ID exists
             id: String(item.id || `fund_${item.code}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`),
+            // Ensure strings
             code: String(item.code || ''),
             name: String(item.name || 'Unknown Fund'),
-            // 数值安全
+            // Ensure numeric fields are safe
             holdingShares: safeNum(item.holdingShares),
             holdingCost: safeNum(item.holdingCost),
             realizedProfit: safeNum(item.realizedProfit),
@@ -116,41 +116,42 @@ export const importData = (jsonString: string): boolean => {
             estimatedNav: safeNum(item.estimatedNav),
             estimatedChangePercent: safeNum(item.estimatedChangePercent),
             estimatedProfit: safeNum(item.estimatedProfit),
-            // 数组安全
+            // Ensure arrays
             holdings: Array.isArray(item.holdings) ? item.holdings : [],
             tags: Array.isArray(item.tags) ? item.tags : [],
-            // *** 核心修复：交易记录日期标准化 ***
-            // JSON.stringify 会把 Date 转为 string，导入时如果不转回，后续 getTime() 会崩
+            // Transaction cleaning (Crucial for date fixes)
             transactions: Array.isArray(item.transactions) ? item.transactions.map((t: any) => ({
                 ...t,
                 amount: safeNum(t.amount),
                 shares: safeNum(t.shares),
                 nav: safeNum(t.nav),
                 fee: safeNum(t.fee),
-                // 确保日期是标准字符串 YYYY-MM-DD
+                // Fix Date: ensure it's a string YYYY-MM-DD
+                // If it came in as a full ISO string (from JSON Date), split it.
                 date: t.date ? String(t.date).split('T')[0] : new Date().toISOString().split('T')[0]
             })) : []
         }));
 
-        // 分组容错
+        // Handle Groups - Auto-fill if missing
         let cleanGroups = Array.isArray(parsed.groups) ? parsed.groups : [];
         if (cleanGroups.length === 0) {
             cleanGroups = [{ id: 'default', name: '我的账户', isDefault: true }];
         }
 
+        // Handle Market Config
         const cleanMarketConfig = Array.isArray(parsed.marketConfig) ? parsed.marketConfig : null;
 
-        // 4. 执行更新
+        // 4. Perform Update
         saveFundsToLocal(cleanFunds);
         saveGroupsToLocal(cleanGroups);
         if (cleanMarketConfig) {
             saveMarketCodes(cleanMarketConfig);
         }
 
-        console.log(`Import success: ${cleanFunds.length} funds loaded.`);
+        console.log(`Import success: ${cleanFunds.length} funds, ${cleanGroups.length} groups`);
         return true;
     } catch (e) {
-        console.error("Import failed:", e);
+        console.error("Import failed details:", e);
         return false;
     }
 };
