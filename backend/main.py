@@ -142,13 +142,15 @@ class AkshareService:
     def fetch_stock_map_cached():
         """获取全市场个股行情 (A/HK/US)"""
         key = "full_market_spot_map"
-        cached = cache_service.get(key, 60)
+        # 实时行情缓存 30s
+        cached = cache_service.get(key, 30)
         if cached: return cached
         
         res = {}
         
         # 1. A股
         try:
+            # 东方财富网-沪深京 A 股-实时行情数据
             df = ak.stock_zh_a_spot_em()
             for r in df.to_dict('records'):
                 code = str(r.get('代码'))
@@ -157,9 +159,10 @@ class AkshareService:
                     "changePercent": SafeUtils.clean_num(r.get('涨跌幅')), # 对齐前端
                     "name": str(r.get('名称'))
                 }
-        except: pass
+        except Exception as e: 
+            logger.warning(f"A Share Fetch Error: {e}")
 
-        # 2. 港股 (新接口: stock_hk_spot_em)
+        # 2. 港股 (stock_hk_spot_em)
         try:
             df = ak.stock_hk_spot_em()
             for r in df.to_dict('records'):
@@ -198,7 +201,6 @@ class AkshareService:
                     res[code] = data
                     res[name] = data
             except Exception as e: 
-                # A股指数获取偶尔会超时，不影响整体
                 pass
             
         # 2. 外盘指数 (index_global_spot_em)
@@ -486,7 +488,7 @@ class FundController:
     @staticmethod
     async def batch_estimate(codes: List[str]):
         """
-        四级火箭估值引擎实现
+        四级火箭估值引擎实现 - 优先使用重仓股穿透估值
         """
         if not codes: return []
         
@@ -521,15 +523,52 @@ class FundController:
                     res['source'] = "official_final"
                     return res
 
-            # --- Level 1: JS 接口 (盘中主力) ---
+            # --- Level 4: 重仓股穿透 (Priority High) ---
+            # 盘中时刻，优先尝试使用重仓股实时涨跌幅进行估值，模拟“养基宝”体验
+            if phase != 'POST_MARKET_FINAL': # 只要不是完全休市
+                holdings = await run_in_threadpool(AkshareService.fetch_holdings_sync, code)
+                if holdings:
+                    market_map = await run_in_threadpool(AkshareService.fetch_stock_map_cached)
+                    
+                    total_impact = 0.0
+                    total_weight = 0.0
+                    
+                    for h in holdings:
+                        hc = h['code']
+                        w = h['percent']
+                        stock_info = market_map.get(hc)
+                        # 尝试不同的 Key 格式 (去除/增加前缀)
+                        if not stock_info and len(hc) == 6:
+                             # 尝试匹配去掉前缀的
+                             pass
+                        
+                        if stock_info:
+                            total_impact += stock_info['changePercent'] * w
+                            total_weight += w
+                    
+                    # 只有当持仓权重覆盖超过40%时才认为有效 (十大重仓通常占50-70%)
+                    if total_weight > 40: 
+                        est_chg = (total_impact / total_weight) * 0.95 # 0.95为仓位修正系数
+                        last_nav = float(res['dwjz']) if float(res['dwjz']) > 0 else 1.0
+                        est_val = last_nav * (1 + est_chg / 100)
+                        
+                        res['gsz'] = f"{est_val:.4f}"
+                        res['gszzl'] = f"{est_chg:.2f}"
+                        res['source'] = "holdings_calc_realtime"
+                        res['gztime'] = datetime.now().strftime("%H:%M")
+                        
+                        # 成功计算则直接返回，不再请求 JS 接口
+                        return res
+
+            # --- Level 1: JS 接口 (盘中主力 Backup) ---
+            # 如果重仓股数据不足（如新发基金、指数基金等），回退到官方实时估值
             if phase != 'POST_MARKET':
                 js_data = await run_in_threadpool(AkshareService.fetch_js_estimate_direct, code)
                 if js_data:
                     val = SafeUtils.clean_num(js_data.get('gszzl'))
-                    if abs(val) > 0.001: # 有效涨跌
-                        res.update(js_data)
-                        res['source'] = "official_realtime_js"
-                        return res
+                    res.update(js_data)
+                    res['source'] = "official_realtime_js"
+                    return res
 
             # --- Level 2: 批量接口 (盘后权威 / 盘中备用) ---
             if code in batch_map:
@@ -561,35 +600,6 @@ class FundController:
                 res['source'] = "shadow_pricing"
                 res['gztime'] = "实时映射"
                 return res
-
-            # --- Level 4: 重仓股穿透 (兜底) ---
-            # 仅在盘中且上述均失败时尝试
-            if phase == 'MARKET':
-                holdings = await run_in_threadpool(AkshareService.fetch_holdings_sync, code)
-                if holdings:
-                    market_map = await run_in_threadpool(AkshareService.fetch_stock_map_cached)
-                    
-                    total_impact = 0.0
-                    total_weight = 0.0
-                    
-                    for h in holdings:
-                        hc = h['code']
-                        w = h['percent']
-                        stock_info = market_map.get(hc)
-                        if stock_info:
-                            total_impact += stock_info['changePercent'] * w
-                            total_weight += w
-                    
-                    if total_weight > 50: # 只有当持仓权重覆盖超过50%时才认为有效
-                        est_chg = (total_impact / total_weight) * 0.95 # 0.95为仓位修正系数
-                        last_nav = float(res['dwjz']) if float(res['dwjz']) > 0 else 1.0
-                        est_val = last_nav * (1 + est_chg / 100)
-                        
-                        res['gsz'] = f"{est_val:.4f}"
-                        res['gszzl'] = f"{est_chg:.2f}"
-                        res['source'] = "holdings_calc"
-                        res['gztime'] = "持仓测算"
-                        return res
 
             return res
 
