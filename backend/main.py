@@ -38,15 +38,13 @@ INDEX_SYMBOL_MAP = {
 }
 
 # 影子定价映射 (Shadow Pricing): 基金代码 -> 市场指数/ETF代码
-# 用于解决 QDII 或 ETF 联接基金在常规接口无估值的问题
-# 修正：右侧的值必须存在于 fetch_global_indices_cached 或 fetch_etf_spot_cached 的返回 Key 中
+# 即使逻辑中移除，保留定义以防未来需要
 SPECIAL_MAPPING = {
     "000218": "518660",   # 黄金 -> 黄金ETF (场内)
     "001186": "000300",   # 华夏沪深300联接 -> 沪深300指数 (A股指数代码通常为 000300)
     "006479": ".NDX",     # 广发纳指 -> 纳斯达克100
     "000614": "GDAXI",    # 华安德国 -> 德国DAX
     "000071": ".IXIC",    # 纳斯达克 -> .IXIC
-    # 可根据需要扩展
 }
 
 # --- Pydantic Models ---
@@ -488,7 +486,7 @@ class FundController:
     @staticmethod
     async def batch_estimate(codes: List[str]):
         """
-        四级火箭估值引擎实现 - 优先使用重仓股穿透估值
+        三级火箭估值引擎实现 - 严格遵循 天天基金JS -> 官方批量 -> 重仓股穿透 顺序
         """
         if not codes: return []
         
@@ -496,13 +494,9 @@ class FundController:
         today_str = datetime.now().strftime('%Y-%m-%d')
         
         # 预加载全局数据
-        # 1. 批量估值表 (Level 2) - 盘后预加载
-        batch_map = await run_in_threadpool(AkshareService.fetch_batch_estimate_cached) if phase == 'POST_MARKET' else {}
-        
-        # 2. 全球指数 & ETF (Level 3)
-        t_indices = run_in_threadpool(AkshareService.fetch_global_indices_cached)
-        t_etf = run_in_threadpool(AkshareService.fetch_etf_spot_cached)
-        indices_map, etf_map = await asyncio.gather(t_indices, t_etf)
+        # 1. 批量估值表 (Level 2)
+        # 无论盘中盘后都尝试加载，作为备用数据源
+        batch_map = await run_in_threadpool(AkshareService.fetch_batch_estimate_cached)
         
         async def estimate_one(code):
             res = {
@@ -511,7 +505,7 @@ class FundController:
                 "jzrq": "", "gztime": "", "source": "none"
             }
             
-            # 获取历史净值作为保底 (Yesterday NAV)
+            # --- Level 0: 历史净值 (保底) ---
             hist = await run_in_threadpool(AkshareService.fetch_history_cached, code)
             if hist:
                 res['dwjz'] = str(hist['nav'])
@@ -519,15 +513,44 @@ class FundController:
                 # 如果历史净值日期就是今天，说明官方已更新 (Level 0: 终局)
                 if hist['date'] == today_str:
                     res['gsz'] = str(hist['nav'])
-                    res['gszzl'] = "0.00" # 当日已结
+                    res['gszzl'] = "0.00" 
                     res['source'] = "official_final"
                     return res
 
-            # --- Level 4: 重仓股穿透 (Priority High) ---
-            # 盘中时刻，优先尝试使用重仓股实时涨跌幅进行估值，模拟“养基宝”体验
-            if phase != 'POST_MARKET_FINAL': # 只要不是完全休市
+            # --- Level 1: JS 接口 (极速 - 盘中首选) ---
+            if phase != 'POST_MARKET':
+                js_data = await run_in_threadpool(AkshareService.fetch_js_estimate_direct, code)
+                if js_data:
+                    val = SafeUtils.clean_num(js_data.get('gszzl'))
+                    # 条件：获取到的 gszzl 不为 0
+                    if abs(val) > 0.0001: 
+                        res.update(js_data)
+                        res['source'] = "official_realtime_js"
+                        return res
+
+            # --- Level 2: 批量接口 (权威 - 盘后首选 / 盘中备用) ---
+            if code in batch_map:
+                bm = batch_map[code]
+                bm_val = SafeUtils.clean_num(bm.get('gszzl'))
+                
+                # 如果是盘后 (POST_MARKET)，直接使用
+                if phase == 'POST_MARKET':
+                    res.update(bm)
+                    res['source'] = "official_batch_em"
+                    return res
+                
+                # 如果是盘中，且有有效值(Level 1 没拿到)，则作为备用
+                if abs(bm_val) > 0.0001:
+                    res.update(bm)
+                    res['source'] = "official_batch_em"
+                    return res
+
+            # --- Level 3: 重仓股穿透 (兜底 - 仅盘中) ---
+            # 条件：仅在 phase == 'MARKET' 且以上所有方法都失效时执行
+            if phase == 'MARKET':
                 holdings = await run_in_threadpool(AkshareService.fetch_holdings_sync, code)
                 if holdings:
+                    # 获取实时行情 (带缓存)
                     market_map = await run_in_threadpool(AkshareService.fetch_stock_map_cached)
                     
                     total_impact = 0.0
@@ -537,17 +560,13 @@ class FundController:
                         hc = h['code']
                         w = h['percent']
                         stock_info = market_map.get(hc)
-                        # 尝试不同的 Key 格式 (去除/增加前缀)
-                        if not stock_info and len(hc) == 6:
-                             # 尝试匹配去掉前缀的
-                             pass
                         
                         if stock_info:
                             total_impact += stock_info['changePercent'] * w
                             total_weight += w
                     
-                    # 只有当持仓权重覆盖超过40%时才认为有效 (十大重仓通常占50-70%)
-                    if total_weight > 40: 
+                    # 只有当持仓权重覆盖超过 30% 时才认为有效
+                    if total_weight > 30: 
                         est_chg = (total_impact / total_weight) * 0.95 # 0.95为仓位修正系数
                         last_nav = float(res['dwjz']) if float(res['dwjz']) > 0 else 1.0
                         est_val = last_nav * (1 + est_chg / 100)
@@ -556,50 +575,7 @@ class FundController:
                         res['gszzl'] = f"{est_chg:.2f}"
                         res['source'] = "holdings_calc_realtime"
                         res['gztime'] = datetime.now().strftime("%H:%M")
-                        
-                        # 成功计算则直接返回，不再请求 JS 接口
                         return res
-
-            # --- Level 1: JS 接口 (盘中主力 Backup) ---
-            # 如果重仓股数据不足（如新发基金、指数基金等），回退到官方实时估值
-            if phase != 'POST_MARKET':
-                js_data = await run_in_threadpool(AkshareService.fetch_js_estimate_direct, code)
-                if js_data:
-                    val = SafeUtils.clean_num(js_data.get('gszzl'))
-                    res.update(js_data)
-                    res['source'] = "official_realtime_js"
-                    return res
-
-            # --- Level 2: 批量接口 (盘后权威 / 盘中备用) ---
-            if code in batch_map:
-                bm = batch_map[code]
-                if abs(SafeUtils.clean_num(bm['gszzl'])) > 0.001:
-                    res.update(bm)
-                    res['source'] = "official_batch_em"
-                    return res
-            
-            # --- Level 3: 影子定价 (ETF/Index Mapping) ---
-            shadow_code = SPECIAL_MAPPING.get(code)
-            shadow_data = None
-            if shadow_code:
-                # 优先匹配 ETF，其次匹配 Index
-                if shadow_code in etf_map: 
-                    shadow_data = etf_map[shadow_code]
-                elif shadow_code in indices_map: 
-                    shadow_data = indices_map[shadow_code]
-            
-            if shadow_data:
-                # 使用影子标的的涨跌幅推算
-                last_nav = float(res['dwjz']) if float(res['dwjz']) > 0 else 1.0
-                chg = shadow_data['changePercent']
-                est_val = last_nav * (1 + chg / 100)
-                
-                res['gsz'] = f"{est_val:.4f}"
-                res['gszzl'] = f"{chg:.2f}"
-                res['name'] = res['name'] or shadow_data['name']
-                res['source'] = "shadow_pricing"
-                res['gztime'] = "实时映射"
-                return res
 
             return res
 
