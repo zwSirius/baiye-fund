@@ -80,12 +80,37 @@ export interface FundRank {
     nav: number;
 }
 
+export interface MarketFundFlow {
+    date: string;
+    main_net_inflow: number; // 主力净流入
+    main_net_ratio: number;
+    sh_close: number;
+    sh_change: number;
+    sz_close: number;
+    sz_change: number;
+}
+
+export interface SectorFlowRank {
+    name: string;
+    change: number;
+    netInflow: number;
+}
+
+export interface FundFlowData {
+    market: MarketFundFlow | null;
+    sectorFlow: {
+        inflow: SectorFlowRank[];
+        outflow: SectorFlowRank[];
+    };
+}
+
 export interface MarketOverview {
     indices: SectorIndex[];
     sectors: {
         top: SectorRank[];
         bottom: SectorRank[];
     };
+    fundFlow?: FundFlowData; // Optional for backward compatibility
     fundRankings: {
         gainers: FundRank[];
         losers: FundRank[];

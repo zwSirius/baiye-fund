@@ -31,6 +31,7 @@ const CustomizedDot = (props: any) => {
 const getSourceLabel = (source?: string) => {
     switch (source) {
         case 'official_history_ak': return '✅ 官方公布'; // official history
+        case 'official_daily_em': return '✅ 官方公布 (晚间)'; // official evening update
         case 'official_realtime': return '📊 官方估算'; // estimate api
         case 'holdings_calc_batch': return '⚡ 重仓股估算'; // calculated
         default: return '📊 官方估算';

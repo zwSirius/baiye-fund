@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { MarketOverview, FundRank, SectorRank } from '../types';
+import { MarketOverview } from '../types';
 import { fetchMarketOverview } from '../services/fundService';
-import { TrendingUp, TrendingDown, RefreshCw, Layers, BarChart3, Settings, AlertCircle } from 'lucide-react';
+import { TrendingUp, TrendingDown, RefreshCw, Layers, BarChart3, Settings, AlertCircle, Banknote } from 'lucide-react';
 
 interface MarketDashboardProps {
     marketCodes: string[];
@@ -37,6 +37,13 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = ({ marketCodes, o
     const Skeleton = ({ className }: { className: string }) => (
         <div className={`animate-pulse bg-slate-200 dark:bg-slate-800 rounded ${className}`}></div>
     );
+
+    const formatMoney = (val: number) => {
+        const absVal = Math.abs(val);
+        if (absVal > 100000000) return `${(val / 100000000).toFixed(2)}亿`;
+        if (absVal > 10000) return `${(val / 10000).toFixed(2)}万`;
+        return val.toFixed(0);
+    }
 
     return (
         <div className="pb-24 animate-fade-in space-y-6">
@@ -119,6 +126,80 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = ({ marketCodes, o
                                 ))
                             )}
                             {(!isLoading && (!data || data.sectors.bottom.length === 0)) && <EmptyState text="暂无数据" />}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Fund Flow Module (New) */}
+            <div className="px-4">
+                <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-3 flex items-center gap-2">
+                    <Banknote size={16} /> 资金流向
+                </h3>
+
+                {/* Market Overall Flow */}
+                {data?.fundFlow?.market && (
+                    <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800 p-4 mb-4 shadow-sm">
+                         <div className="flex justify-between items-center mb-2">
+                             <div className="text-xs text-slate-400">大盘主力净流入</div>
+                             <div className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 px-1.5 rounded">{data.fundFlow.market.date}</div>
+                         </div>
+                         <div className="flex items-baseline gap-2">
+                             <div className={`text-xl font-black ${data.fundFlow.market.main_net_inflow >= 0 ? 'text-up-red' : 'text-down-green'}`}>
+                                 {data.fundFlow.market.main_net_inflow > 0 ? '+' : ''}{formatMoney(data.fundFlow.market.main_net_inflow)}
+                             </div>
+                             <div className={`text-xs font-bold ${data.fundFlow.market.main_net_inflow >= 0 ? 'text-up-red' : 'text-down-green'}`}>
+                                 (净占比 {data.fundFlow.market.main_net_ratio}%)
+                             </div>
+                         </div>
+                         <div className="mt-2 h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                             {/* Simplified visual bar, center is 0 */}
+                             <div 
+                                className={`h-full ${data.fundFlow.market.main_net_inflow >= 0 ? 'bg-up-red' : 'bg-down-green'}`}
+                                style={{
+                                    width: `${Math.min(Math.abs(data.fundFlow.market.main_net_ratio) * 2, 50)}%`, 
+                                    marginLeft: data.fundFlow.market.main_net_inflow >= 0 ? '50%' : `calc(50% - ${Math.min(Math.abs(data.fundFlow.market.main_net_ratio) * 2, 50)}%)`
+                                }}
+                             ></div>
+                         </div>
+                    </div>
+                )}
+                
+                {/* Sector Flow Ranking */}
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-white dark:bg-slate-900 rounded-xl p-3 border border-slate-100 dark:border-slate-800 shadow-sm">
+                        <div className="text-xs font-bold text-slate-700 dark:text-slate-300 mb-2 border-b border-slate-50 dark:border-slate-800 pb-2">
+                            资金流入 Top5
+                        </div>
+                        <div className="space-y-2">
+                             {data?.fundFlow?.sectorFlow?.inflow.map((s, idx) => (
+                                 <div key={s.name} className="flex justify-between items-center text-xs">
+                                     <div className="flex items-center gap-1.5 w-[60%] truncate">
+                                        <span className={`w-3.5 h-3.5 flex items-center justify-center rounded text-[9px] font-bold ${idx < 3 ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-500'}`}>{idx+1}</span>
+                                        <span className="text-slate-600 dark:text-slate-300 truncate">{s.name}</span>
+                                     </div>
+                                     <div className="text-up-red font-bold">{formatMoney(s.netInflow)}</div>
+                                 </div>
+                             ))}
+                             {(!data?.fundFlow) && <Skeleton className="h-24 w-full"/>}
+                        </div>
+                    </div>
+                    
+                    <div className="bg-white dark:bg-slate-900 rounded-xl p-3 border border-slate-100 dark:border-slate-800 shadow-sm">
+                        <div className="text-xs font-bold text-slate-700 dark:text-slate-300 mb-2 border-b border-slate-50 dark:border-slate-800 pb-2">
+                            资金流出 Top5
+                        </div>
+                        <div className="space-y-2">
+                             {data?.fundFlow?.sectorFlow?.outflow.map((s, idx) => (
+                                 <div key={s.name} className="flex justify-between items-center text-xs">
+                                     <div className="flex items-center gap-1.5 w-[60%] truncate">
+                                        <span className={`w-3.5 h-3.5 flex items-center justify-center rounded text-[9px] font-bold ${idx < 3 ? 'bg-green-100 text-green-600' : 'bg-slate-100 text-slate-500'}`}>{idx+1}</span>
+                                        <span className="text-slate-600 dark:text-slate-300 truncate">{s.name}</span>
+                                     </div>
+                                     <div className="text-down-green font-bold">{formatMoney(s.netInflow)}</div>
+                                 </div>
+                             ))}
+                             {(!data?.fundFlow) && <Skeleton className="h-24 w-full"/>}
                         </div>
                     </div>
                 </div>
