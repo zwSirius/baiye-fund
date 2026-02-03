@@ -233,6 +233,83 @@ class AkshareService:
         cache_service.set(key, res)
         return res
 
+    @staticmethod
+    def fetch_sector_rankings_cached():
+        """获取行业板块排行"""
+        key = "sector_rankings"
+        cached = cache_service.get(key, 180) # 3分钟缓存
+        if cached: return cached
+        
+        try:
+            df = ak.stock_board_industry_name_em()
+            # 确保列名正确并排序
+            df['涨跌幅'] = pd.to_numeric(df['涨跌幅'], errors='coerce')
+            df.sort_values('涨跌幅', ascending=False, inplace=True)
+            
+            top = df.head(6).to_dict('records')
+            bottom = df.tail(6).to_dict('records')
+            
+            def fmt(rows):
+                return [{
+                    "name": str(r['板块名称']),
+                    "changePercent": SafeUtils.clean_num(r['涨跌幅']),
+                    "leadingStock": str(r['领涨股票'])
+                } for r in rows]
+
+            res = {"top": fmt(top), "bottom": fmt(bottom)[::-1]} 
+            cache_service.set(key, res)
+            return res
+        except Exception as e:
+            logger.error(f"Sector ranking error: {e}")
+            return {"top": [], "bottom": []}
+
+    @staticmethod
+    def fetch_fund_flow_cached():
+        """获取资金流向 (大盘 + 行业)"""
+        key = "market_fund_flow"
+        cached = cache_service.get(key, 300)
+        if cached: return cached
+        
+        res = {"market": None, "sectorFlow": {"inflow": [], "outflow": []}}
+        
+        # 1. 大盘资金流
+        try:
+            df = ak.stock_market_fund_flow()
+            if not df.empty:
+                last = df.iloc[-1]
+                res["market"] = {
+                    "date": str(last['日期']),
+                    "main_net_inflow": SafeUtils.clean_num(last['主力净流入-净额']),
+                    "main_net_ratio": SafeUtils.clean_num(last['主力净流入-净占比']),
+                    "sh_close": SafeUtils.clean_num(last['上证-收盘价']),
+                    "sh_change": SafeUtils.clean_num(last['上证-涨跌幅']),
+                    "sz_close": SafeUtils.clean_num(last['深证-收盘价']),
+                    "sz_change": SafeUtils.clean_num(last['深证-涨跌幅']),
+                }
+        except: pass
+
+        # 2. 行业资金流
+        try:
+            df_sec = ak.stock_sector_fund_flow_rank(indicator="今日", sector_type="行业资金流")
+            if not df_sec.empty:
+                chg_col = '今日涨跌幅' if '今日涨跌幅' in df_sec.columns else '涨跌幅'
+                df_sec['net'] = pd.to_numeric(df_sec['主力净流入-净额'], errors='coerce')
+                df_sec.sort_values('net', ascending=False, inplace=True)
+                
+                def fmt(rows):
+                    return [{
+                        "name": str(r['名称']),
+                        "change": SafeUtils.clean_num(r.get(chg_col)),
+                        "netInflow": SafeUtils.clean_num(r['net'])
+                    } for r in rows]
+                
+                res["sectorFlow"]["inflow"] = fmt(df_sec.head(5).to_dict('records'))
+                res["sectorFlow"]["outflow"] = fmt(df_sec.tail(5).to_dict('records')[::-1])
+        except: pass
+        
+        cache_service.set(key, res)
+        return res
+
     # --- 四级火箭核心组件 ---
 
     @staticmethod
@@ -536,8 +613,14 @@ async def detail(code: str):
 
 @router.get("/market/overview")
 async def market(codes: Optional[str] = None):
-    # 市场概览：指数 + 板块
-    indices_map = await run_in_threadpool(AkshareService.fetch_global_indices_cached)
+    # 并发获取所有数据
+    t_indices = run_in_threadpool(AkshareService.fetch_global_indices_cached)
+    t_sectors = run_in_threadpool(AkshareService.fetch_sector_rankings_cached)
+    t_flow = run_in_threadpool(AkshareService.fetch_fund_flow_cached)
+    
+    indices_map, sectors, flow = await asyncio.gather(t_indices, t_sectors, t_flow)
+    
+    # 市场概览：指数
     target_codes = codes.split(',') if codes else list(INDEX_SYMBOL_MAP.values())
     
     indices = []
@@ -548,7 +631,8 @@ async def market(codes: Optional[str] = None):
     
     return {
         "indices": indices,
-        "sectors": {"top": [], "bottom": []}, # 暂略
+        "sectors": sectors,
+        "fundFlow": flow,
         "fundRankings": {"gainers": [], "losers": []}
     }
 
