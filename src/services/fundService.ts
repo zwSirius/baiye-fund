@@ -79,26 +79,24 @@ export const importData = (jsonString: string): boolean => {
         }
 
         // 1. 结构兼容处理 (Structure Compatibility)
-        // Handle wrapped structure if imported from a full backup envelope
+        // 支持直接粘贴数组，也支持粘贴完整的备份对象
         if (parsed.data && (parsed.data.funds || parsed.data.groups)) {
             parsed = parsed.data;
+        } else if (parsed.funds || parsed.groups) {
+            // 标准结构，无需处理
+        } else if (Array.isArray(parsed)) {
+            // 假设用户只复制了 funds 数组
+            parsed = { funds: parsed, groups: [] };
         }
 
-        // 2. 基础校验 & 容错 (Basic Validation & Fault Tolerance)
-        // If neither funds nor groups array exists, verify if it's a legacy array format
+        // 2. 基础校验 (Basic Validation)
         if (!Array.isArray(parsed.funds) && !Array.isArray(parsed.groups)) {
-             // Fallback: if user pasted just an array of funds
-             if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].code) {
-                 parsed = { funds: parsed, groups: [] };
-             } else {
-                 throw new Error("未找到有效的基金或分组数据结构");
-             }
+             throw new Error("未找到有效的基金数据");
         }
 
-        // 3. 数据清洗与迁移 (Data Cleaning & Migration)
+        // 3. 数据清洗与类型迁移 (Data Migration)
         const rawFunds = Array.isArray(parsed.funds) ? parsed.funds : [];
         
-        // Helper to ensure numbers are numbers (handle "100" string or null)
         const safeNum = (val: any) => {
             const n = parseFloat(val);
             return isNaN(n) ? 0 : n;
@@ -106,12 +104,11 @@ export const importData = (jsonString: string): boolean => {
 
         const cleanFunds: Fund[] = rawFunds.map((item: any) => ({
             ...item,
-            // Ensure ID exists
+            // 强制转换为字符串
             id: String(item.id || `fund_${item.code}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`),
-            // Ensure strings
             code: String(item.code || ''),
             name: String(item.name || 'Unknown Fund'),
-            // Ensure numeric fields are safe
+            // 数值安全
             holdingShares: safeNum(item.holdingShares),
             holdingCost: safeNum(item.holdingCost),
             realizedProfit: safeNum(item.realizedProfit),
@@ -119,41 +116,41 @@ export const importData = (jsonString: string): boolean => {
             estimatedNav: safeNum(item.estimatedNav),
             estimatedChangePercent: safeNum(item.estimatedChangePercent),
             estimatedProfit: safeNum(item.estimatedProfit),
-            // Ensure arrays
+            // 数组安全
             holdings: Array.isArray(item.holdings) ? item.holdings : [],
             tags: Array.isArray(item.tags) ? item.tags : [],
-            // Transaction cleaning (Crucial for date fixes)
+            // *** 核心修复：交易记录日期标准化 ***
+            // JSON.stringify 会把 Date 转为 string，导入时如果不转回，后续 getTime() 会崩
             transactions: Array.isArray(item.transactions) ? item.transactions.map((t: any) => ({
                 ...t,
                 amount: safeNum(t.amount),
                 shares: safeNum(t.shares),
                 nav: safeNum(t.nav),
                 fee: safeNum(t.fee),
-                // Fix Date: ensure it's a string YYYY-MM-DD
+                // 确保日期是标准字符串 YYYY-MM-DD
                 date: t.date ? String(t.date).split('T')[0] : new Date().toISOString().split('T')[0]
             })) : []
         }));
 
-        // Handle Groups - Auto-fill if missing
+        // 分组容错
         let cleanGroups = Array.isArray(parsed.groups) ? parsed.groups : [];
         if (cleanGroups.length === 0) {
             cleanGroups = [{ id: 'default', name: '我的账户', isDefault: true }];
         }
 
-        // Handle Market Config
         const cleanMarketConfig = Array.isArray(parsed.marketConfig) ? parsed.marketConfig : null;
 
-        // 4. Perform Update
+        // 4. 执行更新
         saveFundsToLocal(cleanFunds);
         saveGroupsToLocal(cleanGroups);
         if (cleanMarketConfig) {
             saveMarketCodes(cleanMarketConfig);
         }
 
-        console.log(`Import success: ${cleanFunds.length} funds, ${cleanGroups.length} groups`);
+        console.log(`Import success: ${cleanFunds.length} funds loaded.`);
         return true;
     } catch (e) {
-        console.error("Import failed details:", e);
+        console.error("Import failed:", e);
         return false;
     }
 };
