@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="zh-CN">
   <head>
@@ -33,6 +34,10 @@
               'down-green': '#10b981',
               background: '#f8fafc',
               surface: '#ffffff',
+            },
+            spacing: {
+              'safe-top': 'env(safe-area-inset-top)',
+              'safe-bottom': 'env(safe-area-inset-bottom)',
             },
             animation: {
               'fade-in': 'fadeIn 0.3s ease-out',
@@ -70,6 +75,9 @@
       }
       .pb-safe {
         padding-bottom: env(safe-area-inset-bottom);
+      }
+      .pt-safe-top {
+        padding-top: env(safe-area-inset-top);
       }
       .no-scrollbar::-webkit-scrollbar {
         display: none;

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { TabView, Transaction, TransactionType } from './types';
 import { analyzeFund } from './services/geminiService';
@@ -7,7 +8,6 @@ import { useFund } from './contexts/FundContext';
 
 // Components
 import { Dashboard } from './components/Dashboard';
-import { BacktestDashboard } from './components/BacktestDashboard';
 import { AIModal } from './components/AIModal';
 import { FundDetail } from './components/FundDetail';
 import { FundFormModal } from './components/FundFormModal';
@@ -198,7 +198,7 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans max-w-md mx-auto shadow-2xl relative overflow-hidden transition-colors pb-24">
       {/* Header */}
-      <header className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md px-5 pt-12 pb-3 sticky top-0 z-20 flex justify-between items-center transition-colors border-b border-transparent dark:border-slate-800">
+      <header className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md px-5 pt-12 pb-3 sticky top-0 z-20 flex justify-between items-center transition-colors border-b border-transparent dark:border-slate-800 pt-safe-top">
         <div className="flex items-center gap-2">
             <div>
                 <h1 className="text-xl font-black text-slate-800 dark:text-white tracking-tight flex items-center gap-1">
@@ -295,11 +295,6 @@ const App: React.FC = () => {
                                 保存
                             </button>
                         </div>
-                    </div>
-                    
-                    <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 p-5">
-                        <div className="font-bold mb-4">高级功能</div>
-                        <BacktestDashboard availableFunds={funds} />
                     </div>
 
                     <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 p-5">

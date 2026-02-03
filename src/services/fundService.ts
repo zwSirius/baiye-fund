@@ -1,7 +1,8 @@
-import { Fund, SectorIndex, BacktestResult, BacktestPoint, MarketOverview } from '../types';
+
+
+import { Fund, MarketOverview, SectorIndex } from '../types';
 import { calculateFundMetrics } from '../utils/finance';
 
-// Robustly access environment variables
 let apiBaseUrl = '';
 try {
     const env = import.meta.env;
@@ -16,7 +17,7 @@ export const API_BASE = apiBaseUrl;
 
 const STORAGE_KEY_FUNDS = 'smartfund_funds_v1';
 const STORAGE_KEY_GROUPS = 'smartfund_groups_v1';
-const STORAGE_KEY_MARKET_CONFIG = 'smartfund_market_config_v1';
+const STORAGE_KEY_MARKET_CODES = 'smartfund_market_codes_v1';
 
 export const saveFundsToLocal = (funds: Fund[]) => {
     localStorage.setItem(STORAGE_KEY_FUNDS, JSON.stringify(funds));
@@ -36,6 +37,18 @@ export const getStoredGroups = () => {
     ];
 };
 
+export const getStoredMarketCodes = (): string[] => {
+    const stored = localStorage.getItem(STORAGE_KEY_MARKET_CODES);
+    if (stored) {
+        return JSON.parse(stored);
+    }
+    return ['1.000001', '0.399001', '0.399006']; // Default: 上证, 深证, 创业板
+};
+
+export const saveMarketCodes = (codes: string[]) => {
+    localStorage.setItem(STORAGE_KEY_MARKET_CODES, JSON.stringify(codes));
+};
+
 export const getInitialFunds = (): Fund[] => {
   const stored = localStorage.getItem(STORAGE_KEY_FUNDS);
   if (stored) {
@@ -44,24 +57,11 @@ export const getInitialFunds = (): Fund[] => {
   return [];
 };
 
-export const getStoredMarketCodes = (): string[] => {
-    const stored = localStorage.getItem(STORAGE_KEY_MARKET_CONFIG);
-    if (stored) {
-        return JSON.parse(stored);
-    }
-    // 默认指数
-    return ["1.000001", "0.399001", "0.399006", "1.000688", "100.HSI", "100.NDX"];
-};
-
-export const saveMarketCodes = (codes: string[]) => {
-    localStorage.setItem(STORAGE_KEY_MARKET_CONFIG, JSON.stringify(codes));
-};
-
 export const exportData = () => {
     const data = {
         funds: getInitialFunds(),
         groups: getStoredGroups(),
-        marketConfig: getStoredMarketCodes(),
+        marketCodes: getStoredMarketCodes(),
         timestamp: Date.now(),
         version: '1.0'
     };
@@ -70,88 +70,14 @@ export const exportData = () => {
 
 export const importData = (jsonString: string): boolean => {
     try {
-        let parsed: any;
-        try {
-            parsed = JSON.parse(jsonString);
-        } catch (e) {
-            console.error("JSON Parse Error:", e);
-            return false;
-        }
-
-        // 1. 结构兼容处理 (Structure Compatibility)
-        // Handle wrapped structure if imported from a full backup envelope
-        if (parsed.data && (parsed.data.funds || parsed.data.groups)) {
-            parsed = parsed.data;
-        } else if (Array.isArray(parsed)) {
-             // Fallback: if user pasted just an array of funds
-             parsed = { funds: parsed, groups: [] };
-        }
-
-        // 2. 基础校验 & 容错 (Basic Validation & Fault Tolerance)
-        if (!Array.isArray(parsed.funds) && !Array.isArray(parsed.groups)) {
-             throw new Error("未找到有效的基金或分组数据结构");
-        }
-
-        // 3. 数据清洗与迁移 (Data Cleaning & Migration)
-        const rawFunds = Array.isArray(parsed.funds) ? parsed.funds : [];
-        
-        // Helper to ensure numbers are numbers
-        const safeNum = (val: any) => {
-            const n = parseFloat(val);
-            return isNaN(n) ? 0 : n;
-        };
-
-        const cleanFunds: Fund[] = rawFunds.map((item: any) => ({
-            ...item,
-            // Ensure ID exists
-            id: String(item.id || `fund_${item.code}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`),
-            // Ensure strings
-            code: String(item.code || ''),
-            name: String(item.name || 'Unknown Fund'),
-            // Ensure numeric fields are safe
-            holdingShares: safeNum(item.holdingShares),
-            holdingCost: safeNum(item.holdingCost),
-            realizedProfit: safeNum(item.realizedProfit),
-            lastNav: safeNum(item.lastNav),
-            estimatedNav: safeNum(item.estimatedNav),
-            estimatedChangePercent: safeNum(item.estimatedChangePercent),
-            estimatedProfit: safeNum(item.estimatedProfit),
-            // Ensure arrays
-            holdings: Array.isArray(item.holdings) ? item.holdings : [],
-            tags: Array.isArray(item.tags) ? item.tags : [],
-            // Transaction cleaning (Crucial for date fixes)
-            transactions: Array.isArray(item.transactions) ? item.transactions.map((t: any) => ({
-                ...t,
-                amount: safeNum(t.amount),
-                shares: safeNum(t.shares),
-                nav: safeNum(t.nav),
-                fee: safeNum(t.fee),
-                // Fix Date: ensure it's a string YYYY-MM-DD
-                // If it came in as a full ISO string (from JSON Date), split it.
-                date: t.date ? String(t.date).split('T')[0] : new Date().toISOString().split('T')[0]
-            })) : []
-        }));
-
-        // Handle Groups - Auto-fill if missing
-        let cleanGroups = Array.isArray(parsed.groups) ? parsed.groups : [];
-        if (cleanGroups.length === 0) {
-            cleanGroups = [{ id: 'default', name: '我的账户', isDefault: true }];
-        }
-
-        // Handle Market Config
-        const cleanMarketConfig = Array.isArray(parsed.marketConfig) ? parsed.marketConfig : null;
-
-        // 4. Perform Update
-        saveFundsToLocal(cleanFunds);
-        saveGroupsToLocal(cleanGroups);
-        if (cleanMarketConfig) {
-            saveMarketCodes(cleanMarketConfig);
-        }
-
-        console.log(`Import success: ${cleanFunds.length} funds, ${cleanGroups.length} groups`);
+        let parsed = JSON.parse(jsonString);
+        if (parsed.data) parsed = parsed.data;
+        if (!Array.isArray(parsed.funds)) return false;
+        saveFundsToLocal(parsed.funds);
+        saveGroupsToLocal(parsed.groups || []);
+        if (parsed.marketCodes) saveMarketCodes(parsed.marketCodes);
         return true;
     } catch (e) {
-        console.error("Import failed details:", e);
         return false;
     }
 };
@@ -161,7 +87,6 @@ export const searchFunds = async (query: string): Promise<Fund[]> => {
   try {
     const response = await fetch(`${API_BASE}/api/search?key=${encodeURIComponent(query)}`);
     const data = await response.json();
-    
     if (Array.isArray(data)) {
         return data.map((item: any) => ({
             id: `temp_${item.code}`,
@@ -185,7 +110,6 @@ export const searchFunds = async (query: string): Promise<Fund[]> => {
     }
     return [];
   } catch (error) {
-    console.warn("Search failed:", error);
     return [];
   }
 };
@@ -210,7 +134,6 @@ export const fetchBatchEstimates = async (fundCodes: string[]) => {
         if (!response.ok) return [];
         return await response.json();
     } catch (error) {
-        console.warn("Batch estimate failed:", error);
         return [];
     }
 }
@@ -232,12 +155,10 @@ export const fetchFundDetails = async (fund: Fund): Promise<Fund> => {
                 code: h.code,
                 name: h.name,
                 percent: parseFloat(h.percent || 0),
-                currentPrice: parseFloat(h.currentPrice || 0),
                 changePercent: parseFloat(h.changePercent || 0)
             })) : fund.holdings
         };
     } catch (error) {
-        console.warn(`Detail fetch failed for ${fund.code}`, error);
         return fund;
     }
 };
@@ -248,70 +169,53 @@ export const getFundHistoryData = async (fundCode: string) => {
         if (!response.ok) return [];
         return await response.json();
     } catch (error) {
-        console.warn(`History fetch failed for ${fundCode}`, error);
         return [];
     }
 };
 
-// Client-side cache for market data
-let marketCache = {
-    data: null as MarketOverview | null,
-    timestamp: 0
-};
+let marketCache = { data: null as MarketOverview | null, timestamp: 0 };
 
 export const fetchMarketOverview = async (codes?: string[], force: boolean = false): Promise<MarketOverview | null> => {
-    // 30 min cache
     if (!force && marketCache.data && (Date.now() - marketCache.timestamp < 30 * 60 * 1000)) {
         return marketCache.data;
     }
-
     try {
-        let url = `${API_BASE}/api/market/overview`;
-        if (codes && codes.length > 0) {
-            url += `?codes=${codes.join(',')}`;
-        }
-        const response = await fetch(url);
+        const response = await fetch(`${API_BASE}/api/market/overview`);
         if (!response.ok) throw new Error("Market fetch failed");
         const data = await response.json();
-        
-        // Update cache
         marketCache = { data, timestamp: Date.now() };
-        
         return data;
     } catch (e) {
-        console.warn("Market overview fetch failed:", e);
-        return marketCache.data; // Return stale data if failed
+        return marketCache.data;
     }
 };
 
 export const fetchMarketIndices = async (codes: string[]): Promise<SectorIndex[]> => {
+    if (!codes || codes.length === 0) return [];
     try {
-        const overview = await fetchMarketOverview(codes);
-        return overview ? overview.indices : [];
+        const response = await fetch(`${API_BASE}/api/market/indices?codes=${codes.join(',')}`);
+        if (!response.ok) return [];
+        return await response.json();
     } catch (e) {
+        console.error("Fetch indices failed", e);
         return [];
     }
 };
 
 export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]> => {
     if (currentFunds.length === 0) return [];
-
     const codes = Array.from(new Set(currentFunds.map(f => f.code)));
     
     let estimatesMap: Record<string, any> = {};
     try {
         const estimates = await fetchBatchEstimates(codes);
-        estimates.forEach((item: any) => {
-            estimatesMap[item.fundcode] = item;
-        });
+        estimates.forEach((item: any) => estimatesMap[item.fundcode] = item);
     } catch (e) {
-        console.error("Batch update failed", e);
         return currentFunds;
     }
 
     return currentFunds.map(fund => {
         const realData = estimatesMap[fund.code];
-        
         if (!realData) return fund;
 
         let estimatedNav = fund.estimatedNav;
@@ -326,31 +230,32 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
         const apiGsz = parseFloat(realData.gsz);
         const apiGszZl = parseFloat(realData.gszzl);
 
-        // 1. 更新昨日净值
+        // 逻辑修正：
+        // 1. 如果有 dwjz (单位净值)，则更新 lastNav。
+        // 2. 如果是 official_published (盘后)，则 estimatedNav = dwjz, estimatedChangePercent = gszzl (日增长率)。
+        // 3. 如果是盘中 (official_data_1/2, holdings_calc)，则更新 estimatedNav 和 estimatedChangePercent。
+
         if (!isNaN(apiDwjz) && apiDwjz > 0) {
             lastNav = apiDwjz;
-            if (realData.jzrq) lastNavDate = realData.jzrq;
-        } else if (lastNav === 0 && !isNaN(apiGsz) && apiGsz > 0) {
-            lastNav = apiGsz; 
         }
 
-        // 2. 更新估值
-        if (!isNaN(apiGsz) && apiGsz > 0) {
-            estimatedNav = apiGsz;
-            estimatedChangePercent = isNaN(apiGszZl) ? 0 : apiGszZl;
-        } else if (lastNav > 0) {
-            estimatedNav = lastNav;
-            estimatedChangePercent = 0;
+        if (source === 'official_published') {
+             if (lastNav > 0) estimatedNav = lastNav;
+             estimatedChangePercent = parseFloat(realData.gszzl || "0"); // 日增长率
+        } else {
+             // 盘中估值
+             if (!isNaN(apiGsz) && apiGsz > 0) estimatedNav = apiGsz;
+             if (!isNaN(apiGszZl)) estimatedChangePercent = apiGszZl;
+             
+             // 如果 LV3 (holdings_calc) 只返回了涨幅，我们需要根据 lastNav 算出估值
+             if (source === 'holdings_calc' && lastNav > 0 && !isNaN(estimatedChangePercent)) {
+                 estimatedNav = lastNav * (1 + estimatedChangePercent / 100);
+             }
         }
 
-        // 3. 处理时间
-        if (realData.gztime) {
-            estimateTime = realData.gztime;
-        }
-
-        if (realData.name && realData.name.length > 0) {
-            name = realData.name;
-        }
+        if (realData.gztime) estimateTime = realData.gztime;
+        if (realData.name && realData.name.length > 0) name = realData.name;
+        if (realData.jzrq) lastNavDate = realData.jzrq; // 净值日期
 
         const profitToday = calculateFundMetrics(
             fund.holdingShares,
@@ -368,7 +273,8 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
             estimatedChangePercent,
             estimatedProfit: profitToday,
             source,
-            estimateTime
+            estimateTime,
+            fee: realData.fee
         };
     });
 };
@@ -378,116 +284,8 @@ export const getNavByDate = async (fundCode: string, dateStr: string): Promise<n
         const history = await getFundHistoryData(fundCode);
         const exactMatch = history.find((h: any) => h.date === dateStr);
         if (exactMatch) return exactMatch.value;
-
-        const targetDate = new Date(dateStr).getTime();
-        const sortedHistory = [...history].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        
-        for (const h of sortedHistory) {
-            if (new Date(h.date).getTime() <= targetDate) {
-                return h.value;
-            }
-        }
-        
-        const realData = await fetchRealTimeEstimate(fundCode);
-        if (realData && realData.dwjz && parseFloat(realData.dwjz) > 0) {
-            return parseFloat(realData.dwjz);
-        }
-
         return 1.0;
     } catch (e) {
         return 1.0;
     }
-};
-
-export const runBacktest = async (portfolio: { code: string, amount: number }[], durationYears: number): Promise<BacktestResult> => {
-    const today = new Date();
-    const startDate = new Date();
-    startDate.setFullYear(today.getFullYear() - durationYears);
-    const startDateStr = startDate.toISOString().split('T')[0];
-
-    const allHistoryProms = portfolio.map(async (p) => {
-        const history = await getFundHistoryData(p.code);
-        const filtered = history.filter((h: any) => h.date >= startDateStr).sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
-        return {
-            code: p.code,
-            amount: p.amount,
-            history: filtered
-        };
-    });
-
-    const fundsData = await Promise.all(allHistoryProms);
-
-    const allDatesSet = new Set<string>();
-    fundsData.forEach(fd => {
-        fd.history.forEach((h: any) => allDatesSet.add(h.date));
-    });
-    
-    const sortedDates = Array.from(allDatesSet).sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
-
-    const fundSharesMap: Map<string, number> = new Map();
-    const fundLastNavMap: Map<string, number> = new Map();
-
-    fundsData.forEach(fd => {
-        if (fd.history.length > 0) {
-            const firstNav = fd.history[0].value;
-            if (firstNav > 0) {
-                const shares = fd.amount / firstNav;
-                fundSharesMap.set(fd.code, shares);
-            }
-        }
-    });
-
-    const chartData: BacktestPoint[] = [];
-
-    for (const date of sortedDates) {
-        let dailyTotal = 0;
-        fundsData.forEach(fd => {
-            const point = fd.history.find((h: any) => h.date === date);
-            if (point) {
-                fundLastNavMap.set(fd.code, point.value);
-            }
-            const nav = point ? point.value : (fundLastNavMap.get(fd.code) || 0);
-            const shares = fundSharesMap.get(fd.code) || 0;
-            dailyTotal += shares * nav;
-        });
-
-        if (dailyTotal > 0) {
-            chartData.push({ date, value: dailyTotal });
-        }
-    }
-
-    if (chartData.length < 2) {
-        return {
-            totalReturn: 0,
-            annualizedReturn: 0,
-            maxDrawdown: 0,
-            finalValue: portfolio.reduce((sum, p) => sum + p.amount, 0),
-            chartData: []
-        };
-    }
-
-    const startValue = chartData[0].value;
-    const finalValue = chartData[chartData.length - 1].value;
-    const totalReturn = ((finalValue - startValue) / startValue) * 100;
-    
-    const dayDiff = (new Date(sortedDates[sortedDates.length-1]).getTime() - new Date(sortedDates[0]).getTime()) / (1000 * 3600 * 24);
-    const exactYears = dayDiff / 365;
-    const annualizedReturn = (Math.pow(finalValue / startValue, 1 / (exactYears || 1)) - 1) * 100;
-
-    let maxDD = 0;
-    let peak = -Infinity;
-    
-    chartData.forEach(p => {
-        if (p.value > peak) peak = p.value;
-        const dd = (peak - p.value) / peak;
-        if (dd > maxDD) maxDD = dd;
-    });
-
-    return {
-        totalReturn: parseFloat(totalReturn.toFixed(2)),
-        annualizedReturn: parseFloat(annualizedReturn.toFixed(2)),
-        maxDrawdown: parseFloat((maxDD * 100).toFixed(2)),
-        finalValue: parseFloat(finalValue.toFixed(2)),
-        chartData
-    };
 };

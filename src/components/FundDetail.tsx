@@ -1,7 +1,8 @@
+
 import React, { useMemo, useState, useEffect } from 'react';
 import { Fund, Transaction } from '../types';
 import { getFundHistoryData, fetchFundDetails } from '../services/fundService';
-import { ChevronLeft, Edit2, Trash2, History, Loader2, Layers, Info, Tag, TrendingUp, TrendingDown, Wallet, ArrowUpRight, ArrowDownRight, PieChart as PieChartIcon } from 'lucide-react';
+import { ChevronLeft, Edit2, Trash2, History, Loader2, Layers, Tag, TrendingUp, TrendingDown, PieChart as PieChartIcon } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
 
 interface FundDetailProps {
@@ -30,11 +31,11 @@ const CustomizedDot = (props: any) => {
 
 const getSourceLabel = (source?: string) => {
     switch (source) {
-        case 'official_history_ak': return '✅ 官方公布'; // official history
-        case 'official_daily_em': return '✅ 官方公布 (晚间)'; // official evening update
-        case 'official_realtime': return '📊 官方估算'; // estimate api
-        case 'holdings_calc_batch': return '⚡ 重仓股估算'; // calculated
-        default: return '📊 官方估算';
+        case 'official_published': return '✅ 官方公布';
+        case 'official_data_1': return '📊 官方数据一';
+        case 'official_data_2': return '📊 官方数据二';
+        case 'holdings_calc': return '⚡ 重仓股计算';
+        default: return '📊 估算中';
     }
 }
 
@@ -63,30 +64,13 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
     loadData();
   }, [fund.code]);
 
-  const { chartData, maxDrawdown, rangeReturn } = useMemo(() => {
-    if (realHistory.length === 0) return { chartData: [], maxDrawdown: 0, rangeReturn: 0 };
+  const { chartData } = useMemo(() => {
+    if (realHistory.length === 0) return { chartData: [] };
     
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - chartPeriod);
     
     const filteredHistory = realHistory.filter(item => new Date(item.date) >= cutoffDate);
-    
-    let maxDD = 0;
-    let peak = -Infinity;
-    if (filteredHistory.length > 0) {
-        filteredHistory.forEach(point => {
-            if (point.value > peak) peak = point.value;
-            const dd = (peak - point.value) / peak;
-            if (dd > maxDD) maxDD = dd;
-        });
-    }
-
-    let ret = 0;
-    if (filteredHistory.length > 1) {
-        const start = filteredHistory[0].value;
-        const end = filteredHistory[filteredHistory.length - 1].value;
-        ret = ((end - start) / start) * 100;
-    }
     
     const transactionMap = new Map<string, Transaction>();
     if (fund.transactions) {
@@ -99,7 +83,7 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
         transaction: transactionMap.get(item.date) || null
     }));
 
-    return { chartData: data, maxDrawdown: (maxDD * 100).toFixed(2), rangeReturn: ret.toFixed(2) };
+    return { chartData: data };
   }, [realHistory, chartPeriod, fund.transactions]);
 
   const handleDelete = () => {
@@ -110,19 +94,10 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
   }
 
   const displayFund = detailedFund;
-  
   const isPortfolio = displayFund.holdingShares > 0;
 
-  // Portfolio Calculations
-  const holdingMarketValue = displayFund.estimatedNav * displayFund.holdingShares;
-  const totalCostValue = displayFund.holdingCost * displayFund.holdingShares;
-  const accumulatedProfit = (holdingMarketValue - totalCostValue) + (displayFund.realizedProfit || 0);
-  const holdingProfitRatio = totalCostValue > 0 ? ((holdingMarketValue - totalCostValue) / totalCostValue) * 100 : 0;
-  
-  const topHoldingsContribution = displayFund.holdings.reduce((acc, h) => acc + (h.percent * h.changePercent / 100), 0);
-
   return (
-    <div className="fixed inset-0 bg-slate-50 dark:bg-slate-950 z-50 overflow-y-auto animate-fade-in flex flex-col">
+    <div className="fixed inset-0 bg-slate-50 dark:bg-slate-950 z-50 overflow-y-auto animate-fade-in flex flex-col pt-safe-top">
       {/* Navbar */}
       <div className="bg-white/90 backdrop-blur-md dark:bg-slate-900/90 sticky top-0 z-20 px-4 py-3 flex items-center justify-between shadow-sm border-b border-slate-100 dark:border-slate-800 transition-colors">
         <div className="flex items-center">
@@ -190,54 +165,13 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
               </div>
           </div>
 
-          {isPortfolio && (
-              <div className="px-4 mb-4">
-                  <div className="bg-white dark:bg-slate-900 rounded-xl p-4 shadow-sm border border-slate-100 dark:border-slate-800">
-                      <div className="flex items-center gap-2 mb-3 text-slate-800 dark:text-white font-bold text-sm">
-                          <Wallet size={16} className="text-blue-500"/> 持仓详情
-                      </div>
-                      <div className="grid grid-cols-2 gap-4 mb-4">
-                          <div>
-                              <div className="text-xs text-slate-400 mb-1">持有金额 (元)</div>
-                              <div className="text-xl font-black text-slate-800 dark:text-white tracking-tight">
-                                  {holdingMarketValue.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                              </div>
-                          </div>
-                          <div>
-                              <div className="text-xs text-slate-400 mb-1">累计盈亏 (含落袋)</div>
-                              <div className={`text-xl font-black tracking-tight ${accumulatedProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                                  {accumulatedProfit > 0 ? '+' : ''}{accumulatedProfit.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-                              </div>
-                          </div>
-                      </div>
-                      
-                      <div className="grid grid-cols-3 gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
-                          <div>
-                              <div className="text-[10px] text-slate-400 mb-0.5">持仓成本</div>
-                              <div className="text-xs font-bold text-slate-700 dark:text-slate-300">{displayFund.holdingCost.toFixed(4)}</div>
-                          </div>
-                          <div className="text-center border-l border-slate-100 dark:border-slate-800">
-                              <div className="text-[10px] text-slate-400 mb-0.5">持有份额</div>
-                              <div className="text-xs font-bold text-slate-700 dark:text-slate-300">{displayFund.holdingShares.toFixed(2)}</div>
-                          </div>
-                          <div className="text-right border-l border-slate-100 dark:border-slate-800">
-                              <div className="text-[10px] text-slate-400 mb-0.5">持有收益率</div>
-                              <div className={`text-xs font-bold ${holdingProfitRatio >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                                  {holdingProfitRatio > 0 ? '+' : ''}{holdingProfitRatio.toFixed(2)}%
-                              </div>
-                          </div>
-                      </div>
-                  </div>
-              </div>
-          )}
-
           <div className="px-4 mb-2">
               <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
                 <button 
                     onClick={() => setActiveTab('INFO')}
                     className={`flex-1 py-2 text-xs font-bold rounded-lg transition ${activeTab === 'INFO' ? 'bg-white dark:bg-slate-700 shadow text-slate-800 dark:text-white' : 'text-slate-400'}`}
                 >
-                    业绩走势
+                    基金概况
                 </button>
                 {isPortfolio && (
                     <button 
@@ -251,7 +185,8 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
           </div>
 
           {activeTab === 'INFO' && (
-             <div className="bg-white dark:bg-slate-900 p-4 mb-3 shadow-sm min-h-[260px] mx-4 rounded-xl border border-slate-100 dark:border-slate-800">
+             <>
+             <div className="bg-white dark:bg-slate-900 p-4 mb-3 shadow-sm mx-4 rounded-xl border border-slate-100 dark:border-slate-800">
                  <div className="flex justify-between items-center mb-4">
                      <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm">净值走势</h3>
                      <div className="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5">
@@ -283,11 +218,7 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                             <XAxis dataKey="date" hide />
                             <YAxis domain={['auto', 'auto']} hide />
-                            <Tooltip 
-                                contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)', fontSize: '12px'}}
-                                itemStyle={{color: '#2563eb', fontWeight: 600}}
-                                labelStyle={{color: '#94a3b8', marginBottom: '4px'}}
-                            />
+                            <Tooltip contentStyle={{fontSize: '12px'}} />
                             <Area 
                                 type="monotone" 
                                 dataKey="value" 
@@ -301,22 +232,93 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                         </ResponsiveContainer>
                     )}
                  </div>
+             </div>
+
+             {/* Industry Distribution Module */}
+             {displayFund.industryDistribution && displayFund.industryDistribution.length > 0 && (
+                <div className="bg-white dark:bg-slate-900 p-4 shadow-sm border border-slate-100 dark:border-slate-800 mx-4 rounded-xl mb-3">
+                     <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 text-sm mb-4">
+                        <PieChartIcon size={16} className="text-indigo-500" />
+                        行业配置
+                     </h3>
+                     <div className="h-40">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart layout="vertical" data={displayFund.industryDistribution.slice(0, 5)} margin={{left: 0, right: 30}}>
+                                <XAxis type="number" hide />
+                                <YAxis 
+                                    type="category" 
+                                    dataKey="name" 
+                                    width={70} 
+                                    tick={{fontSize: 10, fill: '#64748b'}} 
+                                    axisLine={false} 
+                                    tickLine={false}
+                                />
+                                <Tooltip cursor={{fill: 'transparent'}} contentStyle={{fontSize: '10px'}} />
+                                <Bar dataKey="percent" barSize={12} radius={[0, 4, 4, 0]}>
+                                    {displayFund.industryDistribution.slice(0, 5).map((entry, index) => (
+                                        <Cell key={`cell-${index}`} fill={['#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899'][index % 5]} />
+                                    ))}
+                                </Bar>
+                            </BarChart>
+                        </ResponsiveContainer>
+                     </div>
+                </div>
+             )}
+
+             {/* Holdings */}
+             <div className="bg-white dark:bg-slate-900 shadow-sm border border-slate-100 dark:border-slate-800 mx-4 rounded-xl overflow-hidden mb-4">
+                 <div className="flex items-center justify-between p-4 border-b border-slate-50 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50">
+                     <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 text-sm">
+                        <Layers size={16} className="text-indigo-500" />
+                        十大重仓股
+                     </h3>
+                 </div>
                  
-                 {!isLoadingHistory && realHistory.length > 0 && (
-                    <div className="grid grid-cols-2 gap-3 mt-4">
-                        <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg flex items-center justify-between">
-                            <span className="text-[10px] text-slate-400">区间收益</span>
-                            <span className={`text-xs font-bold ${parseFloat(rangeReturn as string) >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                                {parseFloat(rangeReturn as string) > 0 ? '+' : ''}{rangeReturn}%
-                            </span>
+                 {isLoadingDetails ? (
+                    <div className="py-8 flex justify-center"><Loader2 className="animate-spin text-slate-300"/></div>
+                 ) : (
+                    <div className="divide-y divide-slate-100 dark:divide-slate-800/50">
+                        <div className="flex px-4 py-2 bg-slate-50 dark:bg-slate-900 text-[10px] font-bold text-slate-400">
+                            <div className="w-[45%]">股票</div>
+                            <div className="w-[25%] text-right">实时涨跌</div>
+                            <div className="w-[30%] text-right">占比</div>
                         </div>
-                        <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg flex items-center justify-between">
-                            <span className="text-[10px] text-slate-400">最大回撤</span>
-                            <span className="text-xs font-bold text-slate-700 dark:text-slate-200">-{maxDrawdown}%</span>
-                        </div>
+
+                        {displayFund.holdings.length > 0 ? displayFund.holdings.map((stock, idx) => {
+                            return (
+                                <div key={stock.code} className="flex items-center px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
+                                    <div className="w-[45%] flex items-center gap-3 min-w-0 pr-2">
+                                        <div className={`w-5 h-5 flex-shrink-0 flex items-center justify-center rounded-md text-[10px] font-bold ${
+                                            idx < 3 ? 'bg-orange-100 text-orange-600 dark:bg-orange-500/20' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                                        }`}>
+                                            {idx + 1}
+                                        </div>
+                                        <div className="min-w-0">
+                                            <div className="font-bold text-sm text-slate-700 dark:text-slate-200 truncate">{stock.name}</div>
+                                            <div className="text-[10px] text-slate-400 font-mono">{stock.code}</div>
+                                        </div>
+                                    </div>
+
+                                    <div className="w-[25%] text-right">
+                                        <div className={`font-bold text-sm ${stock.changePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
+                                            {stock.changePercent > 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
+                                        </div>
+                                    </div>
+
+                                    <div className="w-[30%] text-right">
+                                        <div className="text-[10px] text-slate-500 font-medium">
+                                            {stock.percent}%
+                                        </div>
+                                    </div>
+                                </div>
+                            )
+                        }) : (
+                            <div className="text-center text-slate-400 text-xs py-8">暂无持仓数据</div>
+                        )}
                     </div>
                  )}
              </div>
+             </>
           )}
 
           {activeTab === 'HISTORY' && isPortfolio && (
@@ -333,7 +335,7 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                                         <span className="text-sm font-medium text-slate-700 dark:text-slate-200">{t.date}</span>
                                     </div>
                                     <div className="text-[10px] text-slate-400 mt-1">
-                                        净值 {t.nav} <span className="mx-1">·</span> 手续费 ¥{t.fee}
+                                        净值 {t.nav}
                                     </div>
                                 </div>
                                 <div className="text-right">
@@ -351,134 +353,8 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                  )}
              </div>
           )}
-          
-          {/* Industry Distribution Module */}
-          {displayFund.industryDistribution && displayFund.industryDistribution.length > 0 && (
-            <div className="bg-white dark:bg-slate-900 p-4 shadow-sm border border-slate-100 dark:border-slate-800 mx-4 rounded-xl mb-3">
-                 <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 text-sm mb-4">
-                    <PieChartIcon size={16} className="text-indigo-500" />
-                    行业配置 (Top 5)
-                 </h3>
-                 <div className="h-32">
-                    <ResponsiveContainer width="100%" height="100%">
-                        <BarChart layout="vertical" data={displayFund.industryDistribution} margin={{left: 30, right: 30}}>
-                            <XAxis type="number" hide />
-                            <YAxis 
-                                type="category" 
-                                dataKey="name" 
-                                width={60} 
-                                tick={{fontSize: 10, fill: '#64748b'}} 
-                                axisLine={false} 
-                                tickLine={false}
-                            />
-                            <Tooltip cursor={{fill: 'transparent'}} contentStyle={{borderRadius: '8px', border: 'none', fontSize: '10px'}} />
-                            <Bar dataKey="percent" barSize={12} radius={[0, 4, 4, 0]}>
-                                {displayFund.industryDistribution.map((entry, index) => (
-                                    <Cell key={`cell-${index}`} fill={['#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899'][index % 5]} />
-                                ))}
-                            </Bar>
-                        </BarChart>
-                    </ResponsiveContainer>
-                 </div>
-            </div>
-          )}
-
-          {/* Holdings Breakdown */}
-          <div className="bg-white dark:bg-slate-900 p-0 shadow-sm border border-slate-100 dark:border-slate-800 mt-2 mx-4 rounded-xl overflow-hidden">
-                 <div className="flex items-center justify-between p-4 border-b border-slate-50 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50">
-                     <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 text-sm">
-                        <Layers size={16} className="text-indigo-500" />
-                        十大重仓股 (实时)
-                     </h3>
-                     <div className="text-[10px] font-bold px-2 py-1 rounded-md bg-white dark:bg-slate-700 border border-slate-100 dark:border-slate-600 text-slate-500 dark:text-slate-300 shadow-sm">
-                        Top10 贡献: <span className={topHoldingsContribution >= 0 ? 'text-up-red' : 'text-down-green'}>{topHoldingsContribution > 0 ? '+' : ''}{topHoldingsContribution.toFixed(2)}%</span>
-                     </div>
-                 </div>
-
-                 {isLoadingDetails ? (
-                    <div className="py-8 flex justify-center"><Loader2 className="animate-spin text-slate-300"/></div>
-                 ) : (
-                    <div>
-                        {/* Column Headers */}
-                        <div className="flex px-4 py-2 bg-slate-50 dark:bg-slate-900 text-[10px] font-bold text-slate-400 uppercase tracking-wide">
-                            <div className="w-[45%]">股票</div>
-                            <div className="w-[25%] text-right">实时涨跌</div>
-                            <div className="w-[30%] text-right">持仓占比/贡献</div>
-                        </div>
-
-                        {displayFund.holdings.length > 0 ? displayFund.holdings.map((stock, idx) => {
-                            const contribution = (stock.percent * stock.changePercent) / 100;
-                            return (
-                                <div key={stock.code} className="flex items-center px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
-                                    {/* Name & Code */}
-                                    <div className="w-[45%] flex items-center gap-3 min-w-0 pr-2">
-                                        <div className={`w-5 h-5 flex-shrink-0 flex items-center justify-center rounded-md text-[10px] font-bold ${
-                                            idx < 3 ? 'bg-orange-100 text-orange-600 dark:bg-orange-500/20' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
-                                        }`}>
-                                            {idx + 1}
-                                        </div>
-                                        <div className="min-w-0">
-                                            <div className="font-bold text-sm text-slate-700 dark:text-slate-200 truncate">{stock.name}</div>
-                                            <div className="text-[10px] text-slate-400 font-mono">{stock.code}</div>
-                                        </div>
-                                    </div>
-
-                                    {/* Price & Change */}
-                                    <div className="w-[25%] text-right">
-                                        <div className={`font-bold text-sm flex items-center justify-end gap-0.5 ${stock.changePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                                            {stock.changePercent >= 0 ? <ArrowUpRight size={12}/> : <ArrowDownRight size={12}/>}
-                                            {stock.changePercent > 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
-                                        </div>
-                                        <div className="text-[10px] text-slate-400 font-medium">
-                                            ¥{stock.currentPrice > 0 ? stock.currentPrice.toFixed(2) : '--'}
-                                        </div>
-                                    </div>
-
-                                    {/* Holdings & Contribution */}
-                                    <div className="w-[30%] text-right pl-2">
-                                        <div className="text-[10px] text-slate-500 dark:text-slate-400 font-medium mb-1">
-                                            {stock.percent}% <span className="text-slate-300 mx-1">|</span> 
-                                            <span className={`${contribution >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                                                {contribution > 0 ? '+' : ''}{contribution.toFixed(2)}%
-                                            </span>
-                                        </div>
-                                        {/* Visual Bar */}
-                                        <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden flex justify-end">
-                                            <div 
-                                                className={`h-full rounded-full ${contribution >= 0 ? 'bg-up-red' : 'bg-down-green'}`} 
-                                                style={{width: `${Math.min(Math.abs(stock.percent * 2), 100)}%`, opacity: 0.8}}
-                                            ></div>
-                                        </div>
-                                    </div>
-                                </div>
-                            )
-                        }) : (
-                            <div className="text-center text-slate-400 text-xs py-8">暂无持仓数据</div>
-                        )}
-                    </div>
-                 )}
-          </div>
-          
-          <div className="px-4 mb-4">
-              <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-3 flex items-center justify-between border border-slate-100 dark:border-slate-800">
-                  <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-white dark:bg-slate-800 rounded-full flex items-center justify-center text-slate-400 shadow-sm">
-                          <Info size={20}/>
-                      </div>
-                      <div>
-                          <div className="text-xs text-slate-400">基金经理</div>
-                          <div className="text-sm font-bold text-slate-700 dark:text-slate-200">{displayFund.manager}</div>
-                      </div>
-                  </div>
-                  <div className="text-[10px] text-slate-400">
-                      成立: {displayFund.start_date || '--'}
-                  </div>
-              </div>
-          </div>
-
       </div>
 
-      {/* Footer Action */}
       <div className="fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 p-4 pb-safe flex gap-3 max-w-md mx-auto z-30">
           <button 
             onClick={() => onSell(displayFund)}
