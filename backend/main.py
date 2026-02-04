@@ -251,23 +251,33 @@ class AkshareService:
     # --- 6. Post-Market: Official Daily NAV (LV1) (30min Cache) ---
     @staticmethod
     def fetch_official_daily_cached():
-        key = "fund_official_daily_em_v2"
+        key = "fund_official_daily_em_rank"
         cached = cache_service.get(key, 1800)
         if cached: return cached
         
         try:
-            # Interface: fund_open_fund_daily_em
-            df = ak.fund_open_fund_daily_em()
+            # Interface: fund_open_fund_rank_em
+            # Note: We use the ranking interface because it often contains accurate 'Date' column for all funds
+            df = ak.fund_open_fund_rank_em(symbol="全部")
             res = {}
-            current_date_str = datetime.now().strftime('%Y-%m-%d')
             for r in df.to_dict('records'):
                 code = str(r.get('基金代码'))
+                # '日期' implies the NAV Date
+                date_val = str(r.get('日期')) if r.get('日期') else datetime.now().strftime('%Y-%m-%d')
+                
+                # Calculating prev_nav from current NAV and change rate if prev_nav is missing
+                nav = SafeUtils.clean_num(r.get('单位净值'))
+                change = SafeUtils.clean_num(r.get('日增长率'))
+                prev_nav = 0
+                if nav > 0:
+                     prev_nav = nav / (1 + change / 100.0)
+
                 res[code] = {
-                    "nav": SafeUtils.clean_num(r.get('单位净值')),
-                    "prev_nav": SafeUtils.clean_num(r.get('前交易日-单位净值')),
-                    "changePercent": SafeUtils.clean_num(r.get('日增长率')),
+                    "nav": nav,
+                    "prev_nav": prev_nav, 
+                    "changePercent": change,
                     "fee": str(r.get('手续费', '0.00%')),
-                    "date": current_date_str
+                    "date": date_val
                 }
             cache_service.set(key, res)
             return res
@@ -457,19 +467,32 @@ class FundController:
             } for c in codes]
 
         # Prepare Batch Data Sources
-        # We pre-fetch batch sources regardless of individual logic to optimize
+        # We ALWAYS fetch official batch to get the base NAV (dwjz) for accurate profit calculation,
+        # even during MARKET phase where estimates (gsz) are used for current value.
         t_lv2_est = run_in_threadpool(AkshareService.fetch_lv2_estimate_cached)
-        t_official_batch = run_in_threadpool(AkshareService.fetch_official_daily_cached) if phase == 'POST_MARKET' else asyncio.sleep(0)
+        t_official_batch = run_in_threadpool(AkshareService.fetch_official_daily_cached)
         
         lv2_est_map, official_map = await asyncio.gather(t_lv2_est, t_official_batch)
         if lv2_est_map is None: lv2_est_map = {}
         if official_map is None: official_map = {}
 
         async def process_one(code):
+            # Default to official data if available (provides base NAV)
+            dwjz = "0"
+            prev_dwjz = "0"
+            if code in official_map:
+                off = official_map[code]
+                dwjz = str(off['nav'])
+                prev_dwjz = str(off['prev_nav'])
+
             res = {
                 "fundcode": code, "name": "", 
-                "gsz": "0", "gszzl": "0", "dwjz": "0", "prev_dwjz": "0",
-                "gztime": "--", "source": "none"
+                "gsz": dwjz, # Default gsz to dwjz
+                "gszzl": "0", 
+                "dwjz": dwjz, 
+                "prev_dwjz": prev_dwjz,
+                "gztime": "--", 
+                "source": "none"
             }
             
             # --- Helper: Intra-day Estimate Logic ---
@@ -501,7 +524,7 @@ class FundController:
                             "dwjz": str(off['nav']),
                             "prev_dwjz": str(off['prev_nav']),
                             "gszzl": str(off['changePercent']),
-                            "gztime": off['date'],
+                            "gztime": off['date'], # Using real date from rank API
                             "source": "official_published",
                             "fee": off['fee']
                         })

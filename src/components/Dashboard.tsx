@@ -1,7 +1,9 @@
 
+
 import React, { useState, useMemo, useEffect } from 'react';
 import { Fund, Group } from '../types';
 import { RefreshCw, LayoutDashboard, Zap, Clock, Moon, Coffee, Plus, ArrowRight } from 'lucide-react';
+import { getDynamicDateLabel } from '../utils/finance';
 
 interface DashboardProps {
   funds: Fund[];
@@ -87,6 +89,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
       return ret;
   }, [funds]);
 
+  // Determine a representative date label for the aggregated card
+  const aggDateLabel = useMemo(() => {
+      if (funds.length > 0) {
+          const first = funds.find(f => f.holdingShares > 0);
+          if (first) return getDynamicDateLabel(first.lastNavDate, first.source).replace('盈亏', '');
+      }
+      return '今日';
+  }, [funds]);
+
   const handleGroupTabClick = (groupId: string) => { setViewMode('FUNDS'); onGroupChange(groupId); };
   const handleSummaryClick = () => { if (currentGroupId !== 'all') onGroupChange('all'); setViewMode('SUMMARY'); };
 
@@ -125,7 +136,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
             <div className="flex gap-2">
                 <div className="flex-1 bg-black/20 rounded-lg p-2 backdrop-blur-md border border-white/5">
-                    <div className="text-white/60 text-[10px] mb-0.5">今日预估</div>
+                    <div className="text-white/60 text-[10px] mb-0.5">{aggDateLabel}预估</div>
                     <div className={`text-sm font-bold ${totalProfit >= 0 ? 'text-red-200' : 'text-emerald-200'}`}>{!isPrivacyMode && totalProfit > 0 ? '+' : ''}{isRefreshing ? '--' : formatMoney(totalProfit, isPrivacyMode)}</div>
                 </div>
                 <div className="flex-1 bg-black/20 rounded-lg p-2 backdrop-blur-md border border-white/5">
@@ -148,7 +159,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   </div>
                   <div className="grid grid-cols-3 gap-2 pl-2">
                       <div><div className="text-[9px] text-slate-400">资产</div><div className="text-xs font-bold text-slate-800 dark:text-slate-200">{formatMoney(group.marketValue, isPrivacyMode)}</div></div>
-                      <div className="text-center"><div className="text-[9px] text-slate-400">今日</div><div className={`text-xs font-bold ${group.todayProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>{!isPrivacyMode && group.todayProfit > 0 ? '+' : ''}{isPrivacyMode ? '****' : group.todayProfit.toFixed(2)}</div></div>
+                      <div className="text-center"><div className="text-[9px] text-slate-400">{aggDateLabel}</div><div className={`text-xs font-bold ${group.todayProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>{!isPrivacyMode && group.todayProfit > 0 ? '+' : ''}{isPrivacyMode ? '****' : group.todayProfit.toFixed(2)}</div></div>
                       <div className="text-right"><div className="text-[9px] text-slate-400">累计</div><div className={`text-xs font-bold ${group.totalReturn >= 0 ? 'text-up-red' : 'text-down-green'}`}>{!isPrivacyMode && group.totalReturn > 0 ? '+' : ''}{isPrivacyMode ? '****' : group.totalReturn.toFixed(2)}</div></div>
                   </div>
               </div>
@@ -157,6 +168,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
           {viewMode === 'FUNDS' && funds.filter(f => f.holdingShares > 0).map(fund => {
               const mv = fund.estimatedNav * fund.holdingShares;
               const ret = (fund.estimatedNav - fund.holdingCost) * fund.holdingShares + (fund.realizedProfit || 0);
+              const dateLabel = getDynamicDateLabel(fund.lastNavDate, fund.source).replace('盈亏', '');
+
               return (
                   <div key={fund.id} onClick={() => onFundClick(fund)} className="bg-white dark:bg-slate-900 rounded-xl p-4 shadow-sm border-[0.5px] border-slate-100 dark:border-slate-800 active:scale-[0.99] transition cursor-pointer relative">
                       {fund.source === 'official_published' && <div className="absolute top-0 right-0 bg-green-500/10 text-green-600 text-[8px] px-1.5 py-0.5 rounded-bl-lg font-bold">官方公布</div>}
@@ -176,7 +189,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       
                       <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 p-2 rounded-lg">
                           <div><div className="text-[9px] text-slate-400">持仓</div><div className="text-xs font-bold text-slate-700 dark:text-slate-200">{formatMoney(mv, isPrivacyMode)}</div></div>
-                          <div className="text-center"><div className="text-[9px] text-slate-400">当日</div><div className={`text-xs font-bold ${fund.estimatedProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>{!isPrivacyMode && fund.estimatedProfit > 0 ? '+' : ''}{isPrivacyMode ? '****' : fund.estimatedProfit.toFixed(2)}</div></div>
+                          <div className="text-center"><div className="text-[9px] text-slate-400">{dateLabel}</div><div className={`text-xs font-bold ${fund.estimatedProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>{!isPrivacyMode && fund.estimatedProfit > 0 ? '+' : ''}{isPrivacyMode ? '****' : fund.estimatedProfit.toFixed(2)}</div></div>
                           <div className="text-right"><div className="text-[9px] text-slate-400">持有</div><div className={`text-xs font-bold ${ret >= 0 ? 'text-up-red' : 'text-down-green'}`}>{!isPrivacyMode && ret > 0 ? '+' : ''}{isPrivacyMode ? '****' : ret.toFixed(2)}</div></div>
                       </div>
                   </div>

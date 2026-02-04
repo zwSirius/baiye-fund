@@ -1,3 +1,4 @@
+
 import { Fund } from '../types';
 
 /**
@@ -35,4 +36,38 @@ export const calculateFundMetrics = (
 export const formatMoney = (val: number, isHidden: boolean = false, fractionDigits: number = 2) => {
     if (isHidden) return '****';
     return val.toLocaleString('zh-CN', { minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits });
+};
+
+/**
+ * 获取动态日期标签
+ * @param dateStr 数据源日期字符串 (YYYY-MM-DD)
+ * @param source 数据源类型
+ */
+export const getDynamicDateLabel = (dateStr?: string, source?: string) => {
+    // 如果是盘中估值，且没有特定的历史日期，默认为“今日”
+    if (!dateStr || dateStr === '--' || (source && source.startsWith('official_data'))) {
+        return '今日盈亏';
+    }
+
+    const today = new Date();
+    const d = new Date(dateStr);
+    
+    // Reset times
+    today.setHours(0,0,0,0);
+    d.setHours(0,0,0,0);
+    
+    if (d.getTime() === today.getTime()) {
+        return '今日盈亏';
+    }
+    
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    if (d.getTime() === yesterday.getTime()) {
+        return '昨日盈亏';
+    }
+    
+    // Format MM-DD
+    const month = (d.getMonth() + 1).toString().padStart(2, '0');
+    const day = d.getDate().toString().padStart(2, '0');
+    return `${month}-${day} 盈亏`;
 };

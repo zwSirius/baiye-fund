@@ -2,7 +2,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Fund, Transaction } from '../types';
 import { getFundHistoryData, fetchFundDetails } from '../services/fundService';
-import { calculateFundMetrics, formatMoney } from '../utils/finance';
+import { calculateFundMetrics, formatMoney, getDynamicDateLabel } from '../utils/finance';
 import { ChevronLeft, Edit2, Trash2, History, Loader2, Layers, Tag, TrendingUp, TrendingDown, PieChart as PieChartIcon, Wallet, Eye, EyeOff } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
 
@@ -105,6 +105,9 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
   const costValue = displayFund.holdingCost * displayFund.holdingShares;
   const totalProfit = marketValue - costValue + (displayFund.realizedProfit || 0);
   const totalReturnPercent = costValue > 0 ? (totalProfit / costValue) * 100 : 0;
+  
+  // Dynamic Label
+  const todayProfitLabel = getDynamicDateLabel(displayFund.lastNavDate, displayFund.source);
 
   return (
     <div className="fixed inset-0 bg-slate-50 dark:bg-slate-950 z-50 overflow-y-auto animate-fade-in flex flex-col">
@@ -206,7 +209,7 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                           </div>
                           
                           <div>
-                              <div className="text-[10px] text-slate-400 mb-0.5">当日盈亏</div>
+                              <div className="text-[10px] text-slate-400 mb-0.5">{todayProfitLabel}</div>
                               <div className={`text-sm font-bold ${displayFund.estimatedProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>
                                   {isReset ? '--' : (
                                       <>{!isPrivacyMode && displayFund.estimatedProfit > 0 ? '+' : ''}{formatMoney(displayFund.estimatedProfit, isPrivacyMode)}</>
