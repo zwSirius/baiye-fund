@@ -325,10 +325,10 @@ class AkshareService:
         except:
             return {}
 
-    # --- 10. Market Indices (Optimized: Direct Fetch & Decoupled) ---
+    # --- 10. Market Indices (Optimized: Separated Fetch) ---
     @staticmethod
     def fetch_market_indices_cached():
-        key = "market_indices_main_v2"
+        key = "market_indices_main_v3"
         cached = cache_service.get(key, 60) # 1 min cache
         if cached: return cached
         
@@ -336,6 +336,8 @@ class AkshareService:
             {"secid": "1.000001", "name": "上证指数"},
             {"secid": "0.399001", "name": "深证成指"},
             {"secid": "0.399006", "name": "创业板指"},
+            {"secid": "1.000688", "name": "科创50"},
+            {"secid": "100.HSI", "name": "恒生指数"},
             {"secid": "100.NDX", "name": "纳指100"}
         ]
         
@@ -357,7 +359,7 @@ class AkshareService:
                     if data and data.get("f43") and data["f43"] != 0:
                         res.append({
                             "name": task['name'],
-                            "code": str(data.get('f12')),
+                            "code": data.get('f12', task['secid'].split('.')[-1]),
                             "value": data["f43"] / 100.0,
                             "changePercent": data["f170"] / 100.0
                         })

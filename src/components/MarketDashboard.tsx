@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect } from 'react';
 import { MarketOverview } from '../types';
 import { fetchMarketOverview } from '../services/fundService';
@@ -17,7 +18,10 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = () => {
     const [rankType, setRankType] = useState<'GAIN' | 'LOSS'>('GAIN');
 
     const loadData = async (force: boolean = false) => {
-        if (!data || force) setIsLoading(true);
+        setIsLoading(true);
+        // Add a minimum visual delay to ensure spinner is seen on fast networks/local
+        if (force) await new Promise(r => setTimeout(r, 500)); 
+        
         try {
             const res = await fetchMarketOverview(undefined, force);
             if (res) setData(res);
@@ -40,9 +44,9 @@ export const MarketDashboard: React.FC<MarketDashboardProps> = () => {
 
             {/* Major Indices */}
             <div className="px-4">
-                <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-3 flex items-center gap-2"><Activity size={16}/> A股大盘 (实时)</h3>
+                <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-3 flex items-center gap-2"><Activity size={16}/> 全球核心指数 (实时)</h3>
                 <div className="grid grid-cols-3 gap-3">
-                    {(isLoading && !data) ? [1,2,3].map(i => <Skeleton key={i} className="h-20 w-full"/>) : (
+                    {(isLoading && !data) ? [1,2,3,4,5,6].map(i => <Skeleton key={i} className="h-20 w-full"/>) : (
                         data?.indices.map((idx) => (
                             <div key={idx.code} className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm text-center">
                                 <div className="text-xs text-slate-500 dark:text-slate-400 mb-1">{idx.name}</div>

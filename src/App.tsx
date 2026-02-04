@@ -229,11 +229,13 @@ const App: React.FC = () => {
                 <p className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">AI Wealth Assistant</p>
             </div>
         </div>
-        <div className="flex gap-2">
-            <button onClick={togglePrivacy} className="text-slate-400 hover:text-slate-600 p-2 bg-slate-100 dark:bg-slate-800 rounded-full">
-                {isPrivacyMode ? <EyeOff size={18}/> : <Eye size={18}/>}
-            </button>
-        </div>
+        {activeTab === TabView.DASHBOARD && (
+            <div className="flex gap-2">
+                <button onClick={togglePrivacy} className="text-slate-400 hover:text-slate-600 p-2 bg-slate-100 dark:bg-slate-800 rounded-full">
+                    {isPrivacyMode ? <EyeOff size={18}/> : <Eye size={18}/>}
+                </button>
+            </div>
+        )}
       </header>
 
       {/* Main */}
@@ -414,6 +416,8 @@ const App: React.FC = () => {
              onDelete={(f) => removeFund(f.id)}
              onBuy={(f) => setTxModal({ isOpen: true, fundId: f.id, type: 'BUY' })}
              onSell={(f) => setTxModal({ isOpen: true, fundId: f.id, type: 'SELL' })}
+             isPrivacyMode={isPrivacyMode}
+             onTogglePrivacy={togglePrivacy}
           />
       )}
     </div>

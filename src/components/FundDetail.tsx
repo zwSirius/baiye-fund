@@ -3,7 +3,7 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { Fund, Transaction } from '../types';
 import { getFundHistoryData, fetchFundDetails } from '../services/fundService';
 import { calculateFundMetrics, formatMoney } from '../utils/finance';
-import { ChevronLeft, Edit2, Trash2, History, Loader2, Layers, Tag, TrendingUp, TrendingDown, PieChart as PieChartIcon, Wallet } from 'lucide-react';
+import { ChevronLeft, Edit2, Trash2, History, Loader2, Layers, Tag, TrendingUp, TrendingDown, PieChart as PieChartIcon, Wallet, Eye, EyeOff } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from 'recharts';
 
 interface FundDetailProps {
@@ -13,6 +13,8 @@ interface FundDetailProps {
   onDelete: (fund: Fund) => void;
   onBuy: (fund: Fund) => void;
   onSell: (fund: Fund) => void;
+  isPrivacyMode: boolean;
+  onTogglePrivacy: () => void;
 }
 
 const CustomizedDot = (props: any) => {
@@ -40,7 +42,7 @@ const getSourceLabel = (source?: string) => {
     }
 }
 
-export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, onDelete, onBuy, onSell }) => {
+export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, onDelete, onBuy, onSell, isPrivacyMode, onTogglePrivacy }) => {
   const [chartPeriod, setChartPeriod] = useState<number>(90);
   const [activeTab, setActiveTab] = useState<'INFO' | 'HISTORY'>('INFO');
   
@@ -112,7 +114,7 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
             <ChevronLeft size={24} />
             </button>
             <div className="ml-1">
-                <h2 className="font-bold text-slate-800 dark:text-white text-base leading-tight max-w-[180px] truncate">{displayFund.name}</h2>
+                <h2 className="font-bold text-slate-800 dark:text-white text-base leading-tight max-w-[150px] truncate">{displayFund.name}</h2>
                 <div className="text-[10px] text-slate-400 flex items-center gap-2">
                     <span className="font-mono">{displayFund.code}</span>
                     {displayFund.type && (
@@ -123,7 +125,10 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                 </div>
             </div>
         </div>
-        <div className="flex gap-1">
+        <div className="flex gap-1 items-center">
+            <button onClick={onTogglePrivacy} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 hover:text-slate-700 transition">
+                {isPrivacyMode ? <EyeOff size={18}/> : <Eye size={18}/>}
+            </button>
             <button onClick={() => onEdit(displayFund)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full text-slate-500 hover:text-blue-500 transition">
                 <Edit2 size={18} />
             </button>
@@ -189,7 +194,7 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                       <div className="grid grid-cols-3 gap-y-4 gap-x-2">
                           <div>
                               <div className="text-[10px] text-slate-400 mb-0.5">持仓金额</div>
-                              <div className="text-sm font-bold text-slate-800 dark:text-white">{isReset ? '--' : formatMoney(marketValue, false)}</div>
+                              <div className="text-sm font-bold text-slate-800 dark:text-white">{isReset ? '--' : formatMoney(marketValue, isPrivacyMode)}</div>
                           </div>
                           <div className="text-center">
                               <div className="text-[10px] text-slate-400 mb-0.5">持仓份额</div>
@@ -197,14 +202,14 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                           </div>
                           <div className="text-right">
                               <div className="text-[10px] text-slate-400 mb-0.5">持仓成本</div>
-                              <div className="text-sm font-bold text-slate-800 dark:text-white">{displayFund.holdingCost.toFixed(4)}</div>
+                              <div className="text-sm font-bold text-slate-800 dark:text-white">{isPrivacyMode ? '****' : displayFund.holdingCost.toFixed(4)}</div>
                           </div>
                           
                           <div>
                               <div className="text-[10px] text-slate-400 mb-0.5">当日盈亏</div>
                               <div className={`text-sm font-bold ${displayFund.estimatedProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>
                                   {isReset ? '--' : (
-                                      <>{displayFund.estimatedProfit > 0 ? '+' : ''}{formatMoney(displayFund.estimatedProfit, false)}</>
+                                      <>{!isPrivacyMode && displayFund.estimatedProfit > 0 ? '+' : ''}{formatMoney(displayFund.estimatedProfit, isPrivacyMode)}</>
                                   )}
                               </div>
                           </div>
@@ -212,7 +217,7 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                               <div className="text-[10px] text-slate-400 mb-0.5">累计盈亏</div>
                               <div className={`text-sm font-bold ${totalProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>
                                   {isReset ? '--' : (
-                                      <>{totalProfit > 0 ? '+' : ''}{formatMoney(totalProfit, false)}</>
+                                      <>{!isPrivacyMode && totalProfit > 0 ? '+' : ''}{formatMoney(totalProfit, isPrivacyMode)}</>
                                   )}
                               </div>
                           </div>
@@ -220,7 +225,7 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                               <div className="text-[10px] text-slate-400 mb-0.5">累计收益率</div>
                               <div className={`text-sm font-bold ${totalReturnPercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
                                   {isReset ? '--' : (
-                                      <>{totalReturnPercent > 0 ? '+' : ''}{totalReturnPercent.toFixed(2)}%</>
+                                      <>{!isPrivacyMode && totalReturnPercent > 0 ? '+' : ''}{isPrivacyMode ? '****' : totalReturnPercent.toFixed(2)}%</>
                                   )}
                               </div>
                           </div>
@@ -396,7 +401,7 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                                     </div>
                                 </div>
                                 <div className="text-right">
-                                    <div className="font-bold text-slate-800 dark:text-white">¥{t.amount.toLocaleString()}</div>
+                                    <div className="font-bold text-slate-800 dark:text-white">¥{formatMoney(t.amount, isPrivacyMode)}</div>
                                     <div className="text-xs text-slate-400">{t.shares.toFixed(2)} 份</div>
                                 </div>
                             </div>
