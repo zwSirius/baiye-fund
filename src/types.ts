@@ -1,4 +1,5 @@
 
+
 export interface Stock {
   code: string;
   name: string;
@@ -45,7 +46,7 @@ export interface Fund {
   lastNav: number; 
   lastNavDate: string;
   holdings: Stock[]; 
-  industryDistribution?: IndustryItem[]; // 新增行业配置
+  industryDistribution?: IndustryItem[]; 
   tags: string[]; 
   type?: string; 
   start_date?: string; 
@@ -55,8 +56,8 @@ export interface Fund {
   estimatedChangePercent: number;
   estimatedProfit: number; 
   estimateTime?: string; 
-  source?: string; // "official_data_1" | "official_data_2" | "holdings_calc" | "official_published"
-  fee?: string; // 申购费率字符串
+  source?: string; // "official_data_1" | "official_data_2" | "official_published" | "reset" | "none"
+  fee?: string; 
   
   // User specific
   groupId: string; 
@@ -70,7 +71,7 @@ export interface Fund {
 export interface SectorRank {
     name: string;
     changePercent: number;
-    inflow?: number; // 净流入 (亿元)
+    inflow?: number; 
 }
 
 export interface FundRank {

@@ -35,7 +35,7 @@ const getSourceLabel = (source?: string) => {
         case 'official_published': return '✅ 官方公布';
         case 'official_data_1': return '📊 官方数据一';
         case 'official_data_2': return '📊 官方数据二';
-        case 'holdings_calc': return '⚡ 重仓股计算';
+        case 'reset': return '⏳ 等待开盘';
         default: return '📊 估算中';
     }
 }
@@ -96,6 +96,7 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
 
   const displayFund = detailedFund;
   const isPortfolio = displayFund.holdingShares > 0;
+  const isReset = displayFund.source === 'reset';
 
   // Calculate Holdings Data
   const marketValue = displayFund.estimatedNav * displayFund.holdingShares;
@@ -105,11 +106,6 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
 
   return (
     <div className="fixed inset-0 bg-slate-50 dark:bg-slate-950 z-50 overflow-y-auto animate-fade-in flex flex-col">
-      {/* 
-         Fixed Header with Frosted Glass 
-         Using 'pt-detail-header' here ensures the content starts lower down,
-         and the background covers the entire top area including status bar.
-      */}
       <div className="fixed top-0 left-0 right-0 z-50 bg-white/90 backdrop-blur-xl dark:bg-slate-900/90 pt-detail-header px-4 pb-3 flex items-center justify-between shadow-sm border-b border-slate-100 dark:border-slate-800 transition-colors">
         <div className="flex items-center">
             <button onClick={onBack} className="p-2 -ml-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition text-slate-600 dark:text-slate-300">
@@ -137,7 +133,6 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
         </div>
       </div>
 
-      {/* Spacer for Fixed Header - aligns content below the header */}
       <div className="pt-detail-header mt-[60px]"></div>
 
       <div className="flex-1 pb-24">
@@ -145,6 +140,7 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
           {/* Hero Card */}
           <div className="p-4 pb-2">
               <div className={`rounded-2xl p-6 text-white shadow-xl relative overflow-hidden transition-colors ${
+                  isReset ? 'bg-slate-400' :
                   displayFund.estimatedChangePercent >= 0 
                   ? 'bg-gradient-to-br from-red-500 to-rose-600 shadow-red-500/20' 
                   : 'bg-gradient-to-br from-emerald-500 to-teal-600 shadow-emerald-500/20'
@@ -161,16 +157,20 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                            </div>
                            <div className="flex items-baseline gap-2">
                                 <span className="text-4xl font-black tracking-tight">
-                                    {displayFund.estimatedChangePercent > 0 ? '+' : ''}{displayFund.estimatedChangePercent}%
+                                    {isReset ? '--' : (
+                                        <>
+                                        {displayFund.estimatedChangePercent > 0 ? '+' : ''}{displayFund.estimatedChangePercent}%
+                                        </>
+                                    )}
                                 </span>
                                 <span className="text-lg font-bold opacity-80">
-                                    {displayFund.estimatedNav.toFixed(4)}
+                                    {isReset ? '--' : displayFund.estimatedNav.toFixed(4)}
                                 </span>
                            </div>
                        </div>
                    </div>
 
-                    {!isPortfolio && (
+                    {!isPortfolio && !isReset && (
                         <div className="mt-4 flex gap-4 text-xs opacity-80">
                             <div>昨日净值: {displayFund.lastNav.toFixed(4)}</div>
                             <div>更新日期: {displayFund.lastNavDate}</div>
@@ -189,7 +189,7 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                       <div className="grid grid-cols-3 gap-y-4 gap-x-2">
                           <div>
                               <div className="text-[10px] text-slate-400 mb-0.5">持仓金额</div>
-                              <div className="text-sm font-bold text-slate-800 dark:text-white">{formatMoney(marketValue, false)}</div>
+                              <div className="text-sm font-bold text-slate-800 dark:text-white">{isReset ? '--' : formatMoney(marketValue, false)}</div>
                           </div>
                           <div className="text-center">
                               <div className="text-[10px] text-slate-400 mb-0.5">持仓份额</div>
@@ -203,19 +203,25 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                           <div>
                               <div className="text-[10px] text-slate-400 mb-0.5">当日盈亏</div>
                               <div className={`text-sm font-bold ${displayFund.estimatedProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                                  {displayFund.estimatedProfit > 0 ? '+' : ''}{formatMoney(displayFund.estimatedProfit, false)}
+                                  {isReset ? '--' : (
+                                      <>{displayFund.estimatedProfit > 0 ? '+' : ''}{formatMoney(displayFund.estimatedProfit, false)}</>
+                                  )}
                               </div>
                           </div>
                           <div className="text-center">
                               <div className="text-[10px] text-slate-400 mb-0.5">累计盈亏</div>
                               <div className={`text-sm font-bold ${totalProfit >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                                  {totalProfit > 0 ? '+' : ''}{formatMoney(totalProfit, false)}
+                                  {isReset ? '--' : (
+                                      <>{totalProfit > 0 ? '+' : ''}{formatMoney(totalProfit, false)}</>
+                                  )}
                               </div>
                           </div>
                           <div className="text-right">
                               <div className="text-[10px] text-slate-400 mb-0.5">累计收益率</div>
                               <div className={`text-sm font-bold ${totalReturnPercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                                  {totalReturnPercent > 0 ? '+' : ''}{totalReturnPercent.toFixed(2)}%
+                                  {isReset ? '--' : (
+                                      <>{totalReturnPercent > 0 ? '+' : ''}{totalReturnPercent.toFixed(2)}%</>
+                                  )}
                               </div>
                           </div>
                       </div>
@@ -323,7 +329,7 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                 </div>
              )}
 
-             {/* Holdings */}
+             {/* Holdings List (No real-time price) */}
              <div className="bg-white dark:bg-slate-900 shadow-sm border border-slate-100 dark:border-slate-800 mx-4 rounded-xl overflow-hidden mb-4">
                  <div className="flex items-center justify-between p-4 border-b border-slate-50 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50">
                      <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2 text-sm">
@@ -337,15 +343,14 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                  ) : (
                     <div className="divide-y divide-slate-100 dark:divide-slate-800/50">
                         <div className="flex px-4 py-2 bg-slate-50 dark:bg-slate-900 text-[10px] font-bold text-slate-400">
-                            <div className="w-[45%]">股票</div>
-                            <div className="w-[25%] text-right">实时涨跌</div>
+                            <div className="w-[70%]">股票</div>
                             <div className="w-[30%] text-right">占比</div>
                         </div>
 
                         {displayFund.holdings.length > 0 ? displayFund.holdings.map((stock, idx) => {
                             return (
                                 <div key={stock.code} className="flex items-center px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition">
-                                    <div className="w-[45%] flex items-center gap-3 min-w-0 pr-2">
+                                    <div className="w-[70%] flex items-center gap-3 min-w-0 pr-2">
                                         <div className={`w-5 h-5 flex-shrink-0 flex items-center justify-center rounded-md text-[10px] font-bold ${
                                             idx < 3 ? 'bg-orange-100 text-orange-600 dark:bg-orange-500/20' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
                                         }`}>
@@ -354,12 +359,6 @@ export const FundDetail: React.FC<FundDetailProps> = ({ fund, onBack, onEdit, on
                                         <div className="min-w-0">
                                             <div className="font-bold text-sm text-slate-700 dark:text-slate-200 truncate">{stock.name}</div>
                                             <div className="text-[10px] text-slate-400 font-mono">{stock.code}</div>
-                                        </div>
-                                    </div>
-
-                                    <div className="w-[25%] text-right">
-                                        <div className={`font-bold text-sm ${stock.changePercent >= 0 ? 'text-up-red' : 'text-down-green'}`}>
-                                            {stock.changePercent > 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
                                         </div>
                                     </div>
 

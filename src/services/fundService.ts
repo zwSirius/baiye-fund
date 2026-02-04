@@ -40,7 +40,7 @@ export const getStoredMarketCodes = (): string[] => {
     if (stored) {
         return JSON.parse(stored);
     }
-    return ['1.000001', '0.399001', '0.399006']; // Default: 上证, 深证, 创业板
+    return ['1.000001', '0.399001', '0.399006']; 
 };
 
 export const saveMarketCodes = (codes: string[]) => {
@@ -216,6 +216,7 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
         const realData = estimatesMap[fund.code];
         if (!realData) return fund;
 
+        // Default: keep current display if no update or error
         let estimatedNav = fund.estimatedNav;
         let estimatedChangePercent = fund.estimatedChangePercent;
         let name = fund.name;
@@ -224,41 +225,48 @@ export const updateFundEstimates = async (currentFunds: Fund[]): Promise<Fund[]>
         let source = realData.source;
         let estimateTime = "";
 
+        // Case 1: Reset Period (09:00 - 09:30)
+        if (source === 'reset') {
+             return {
+                 ...fund,
+                 source: 'reset',
+                 estimateTime: '--',
+                 estimatedNav: 0,
+                 estimatedChangePercent: 0,
+                 estimatedProfit: 0
+             };
+        }
+
         const apiDwjz = parseFloat(realData.dwjz);
-        const apiPrevDwjz = parseFloat(realData.prev_dwjz); // Backend now returns this if official
+        const apiPrevDwjz = parseFloat(realData.prev_dwjz); 
         const apiGsz = parseFloat(realData.gsz);
         const apiGszZl = parseFloat(realData.gszzl);
 
+        // Case 2: Official Data Published (Post-market successful fetch)
         if (source === 'official_published') {
-             // Official Data
              if (!isNaN(apiDwjz) && apiDwjz > 0) estimatedNav = apiDwjz;
              
-             // IMPORTANT: For official data, we need the "Previous NAV" (Yesterday's official) 
-             // to calculate profit: (TodayOfficial - YesterdayOfficial) * Shares
-             // If we used apiDwjz as lastNav, the difference would be 0.
+             // For daily profit calc: (TodayNAV - YesterdayNAV) * Shares
              if (!isNaN(apiPrevDwjz) && apiPrevDwjz > 0) {
                  lastNav = apiPrevDwjz;
              } else if (!isNaN(apiDwjz) && apiDwjz > 0 && !isNaN(apiGszZl)) {
-                 // Fallback: If prev not provided, reverse calc from today + change%
+                 // Fallback if prev_nav missing
                  lastNav = apiDwjz / (1 + apiGszZl / 100);
              }
 
              if (!isNaN(apiGszZl)) estimatedChangePercent = apiGszZl;
              
         } else {
-             // Intra-day Estimates
-             // Here, lastNav should be the "Official NAV from Yesterday" which usually is stored in DB.
-             // But if realData.dwjz is valid (it implies last closed day NAV), we update it.
-             if (!isNaN(apiDwjz) && apiDwjz > 0) {
-                lastNav = apiDwjz;
-             }
-
+             // Case 3: Estimates (Intra-day OR Post-market fallback)
+             // Prioritize GSZ
              if (!isNaN(apiGsz) && apiGsz > 0) estimatedNav = apiGsz;
              if (!isNaN(apiGszZl)) estimatedChangePercent = apiGszZl;
              
-             // If LV3 (holdings_calc) only returns change%, calc NAV
-             if (source === 'holdings_calc' && lastNav > 0 && !isNaN(estimatedChangePercent)) {
-                 estimatedNav = lastNav * (1 + estimatedChangePercent / 100);
+             // For estimates, 'lastNav' should ideally stay as the "Previous Close NAV" which is stored in DB.
+             // But if the API returns a valid 'dwjz' (Latest Closed NAV), we can update 'lastNav' to it
+             // to ensure the base for calculation is correct.
+             if (!isNaN(apiDwjz) && apiDwjz > 0) {
+                 lastNav = apiDwjz;
              }
         }
 
