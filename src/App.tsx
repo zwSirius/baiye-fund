@@ -20,7 +20,7 @@ import { ProfitCalendar } from './components/ProfitCalendar';
 import { MarketDashboard } from './components/MarketDashboard';
 
 // Icons
-import { LayoutGrid, Settings, Bot, Plus, Moon, Sun, Monitor, Download, Upload, Clipboard, ClipboardPaste, Users, X, Eye, EyeOff, Key, BarChart3, Calendar, Trash2, Check } from 'lucide-react';
+import { LayoutGrid, Settings, Bot, Plus, Moon, Sun, Monitor, Download, Upload, Clipboard, ClipboardPaste, Users, X, Eye, EyeOff, Key, BarChart3, Calendar, Trash2, Check, Save } from 'lucide-react';
 
 const NavBtn = ({ icon, label, isActive, onClick }: any) => (
     <button 
@@ -139,10 +139,12 @@ const App: React.FC = () => {
   };
 
   const clearApiKey = () => {
-      setCustomApiKey('');
-      localStorage.removeItem('smartfund_custom_key');
-      setApiConnectionStatus('unknown');
-      window.dispatchEvent(new Event('storage'));
+      if (confirm('确定要清空 API Key 并断开连接吗？')) {
+        setCustomApiKey('');
+        localStorage.removeItem('smartfund_custom_key');
+        setApiConnectionStatus('unknown');
+        window.dispatchEvent(new Event('storage'));
+      }
   };
 
   const handleAnalyze = async (fund: any) => {
@@ -303,33 +305,39 @@ const App: React.FC = () => {
                         <div className="text-xs text-slate-500 dark:text-slate-400 mb-4 leading-relaxed bg-slate-50 dark:bg-slate-800 p-3 rounded-lg">
                             配置 Google Gemini API Key 以解锁智能分析功能。Key 仅保存在本地。
                         </div>
-                        <div className="flex gap-2">
+                        
+                        <div className="space-y-3">
                             <input 
                                 type="password" 
                                 value={customApiKey}
                                 onChange={(e) => setCustomApiKey(e.target.value)}
                                 placeholder="sk-..."
-                                className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition"
                             />
-                            {customApiKey && (
-                                <button onClick={clearApiKey} className="p-2.5 bg-red-50 text-red-500 rounded-xl hover:bg-red-100 active:scale-95 transition">
-                                    <Trash2 size={18}/>
+                            
+                            <div className="grid grid-cols-2 gap-3">
+                                <button 
+                                    onClick={clearApiKey}
+                                    className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-4 py-2.5 rounded-xl text-sm font-bold active:scale-95 transition flex items-center justify-center gap-2 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                                >
+                                    <Trash2 size={16} /> 清空
                                 </button>
-                            )}
-                            <button 
-                                onClick={saveCustomApiKey}
-                                className="bg-indigo-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold active:scale-95 transition whitespace-nowrap"
-                            >
-                                保存并测试
-                            </button>
+                                <button 
+                                    onClick={saveCustomApiKey}
+                                    className="bg-indigo-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold active:scale-95 transition flex items-center justify-center gap-2 shadow-lg shadow-indigo-200 dark:shadow-indigo-900/20"
+                                >
+                                    <Save size={16} /> 保存
+                                </button>
+                            </div>
                         </div>
+
                         {apiConnectionStatus === 'connected' && (
-                            <div className="mt-2 text-xs text-green-500 flex items-center gap-1 font-bold">
+                            <div className="mt-3 text-xs text-green-500 flex items-center gap-1 font-bold animate-fade-in">
                                 <Check size={12}/> 连接成功
                             </div>
                         )}
                         {apiConnectionStatus === 'failed' && (
-                            <div className="mt-2 text-xs text-red-500 flex items-center gap-1 font-bold">
+                            <div className="mt-3 text-xs text-red-500 flex items-center gap-1 font-bold animate-fade-in">
                                 <X size={12}/> 连接失败，请检查Key
                             </div>
                         )}
